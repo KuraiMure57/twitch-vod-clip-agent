@@ -1,0 +1,39 @@
+name: Initial Environment Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-environment:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Python version
+        run: python3 --version
+
+      - name: Show FFmpeg version
+        run: ffmpeg -version | head -n 1
+
+      - name: Show Git version
+        run: git --version
+
+      - name: Test Python
+        run: |
+          python3 - <<'PY'
+          print("Python is working correctly.")
+          PY
+
+      - name: Test FFmpeg
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "FFmpeg is installed correctly."
+          else
+            echo "FFmpeg is NOT installed."
+            exit 1
+          fi
+
+      - name: Environment test completed
+        run: echo "Initial environment test completed successfully."
