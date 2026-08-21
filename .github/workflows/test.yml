@@ -23,6 +23,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
 
       - name: Show Python version
         run: python --version
@@ -35,8 +36,16 @@ jobs:
       - name: Show FFmpeg version
         run: ffmpeg -version | head -n 1
 
+      - name: Show FFprobe version
+        run: ffprobe -version | head -n 1
+
       - name: Show Git version
         run: git --version
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Test Python
         run: |
@@ -62,6 +71,24 @@ jobs:
             exit 1
           fi
 
+      - name: Test Whisper
+        run: |
+          python - <<'PY'
+          import whisper
+
+          print("Whisper imported successfully.")
+          print(f"Whisper version: {getattr(whisper, '__version__', 'unknown')}")
+          PY
+
+      - name: Test Gemini SDK
+        run: |
+          python - <<'PY'
+          from google import genai
+
+          print("Google Gemini SDK imported successfully.")
+          print(f"Gemini SDK module: {genai.__name__}")
+          PY
+
       - name: Environment test completed
         run: |
           echo "========================================="
@@ -70,4 +97,6 @@ jobs:
           echo "FFmpeg: OK"
           echo "FFprobe: OK"
           echo "Git: OK"
+          echo "Whisper: OK"
+          echo "Gemini SDK: OK"
           echo "========================================="
