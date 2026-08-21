@@ -11,8 +11,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Show system information
+        run: |
+          echo "Operating system:"
+          uname -a
+          echo
+          echo "Ubuntu version:"
+          lsb_release -a
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Show Python version
-        run: python3 --version
+        run: python --version
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Show FFmpeg version
         run: ffmpeg -version | head -n 1
@@ -22,7 +40,7 @@ jobs:
 
       - name: Test Python
         run: |
-          python3 - <<'PY'
+          python - <<'PY'
           print("Python is working correctly.")
           PY
 
@@ -35,5 +53,21 @@ jobs:
             exit 1
           fi
 
+      - name: Test FFprobe
+        run: |
+          if command -v ffprobe >/dev/null 2>&1; then
+            echo "FFprobe is installed correctly."
+          else
+            echo "FFprobe is NOT installed."
+            exit 1
+          fi
+
       - name: Environment test completed
-        run: echo "Initial environment test completed successfully."
+        run: |
+          echo "========================================="
+          echo "Initial environment test completed."
+          echo "Python: OK"
+          echo "FFmpeg: OK"
+          echo "FFprobe: OK"
+          echo "Git: OK"
+          echo "========================================="
