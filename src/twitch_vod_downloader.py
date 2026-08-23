@@ -1,4 +1,3 @@
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -6,80 +5,86 @@ from pathlib import Path
 import yt_dlp
 
 
-OUTPUT_DIR = Path("data/vods")
+VOD_URL = "https://www.twitch.tv/videos/2846005700"
+OUTPUT_DIR = Path("data/vod_test")
+OUTPUT_FILE = OUTPUT_DIR / "vod_test.mp4"
+
+TEST_DURATION_SECONDS = 60
 
 
-def get_latest_vod_url() -> str:
-    """
-    Get the latest VOD URL using the Twitch API module.
-    """
-
-    import twitch_vods
-
-    # This function is intentionally kept separate from the
-    # downloader so the Twitch API logic remains reusable.
-    access_token = twitch_vods.get_access_token()
-    user = twitch_vods.get_user(access_token)
-    vod = twitch_vods.get_latest_vod(
-        access_token,
-        user["id"],
-    )
-
-    if vod is None:
-        raise RuntimeError("No Twitch VODs were found.")
-
-    print(f"Selected VOD: {vod['id']}")
-    print(f"Title: {vod['title']}")
-    print(f"URL: {vod['url']}")
-
-    return vod["url"]
-
-
-def download_vod(vod_url: str) -> Path:
+def download_vod_segment() -> Path:
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    output_template = str(
-        OUTPUT_DIR / "%(id)s.%(ext)s"
+    temp_template = str(
+        OUTPUT_DIR / "source.%(ext)s"
     )
 
     options = {
-        "format": "bestvideo+bestaudio/best",
-        "merge_output_format": "mp4",
-        "outtmpl": output_template,
+        "format": "best[ext=mp4]/best",
+        "outtmpl": temp_template,
         "noplaylist": True,
         "quiet": False,
         "no_warnings": False,
+        "download_ranges": lambda info, ydl: [
+            {
+                "start_time": 0,
+                "end_time": TEST_DURATION_SECONDS,
+            }
+        ],
+        "force_keyframes_at_cuts": True,
     }
 
-    print("Starting VOD download...")
+    print(f"Downloading first {TEST_DURATION_SECONDS} seconds...")
+    print(f"VOD: {VOD_URL}")
 
     with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info(
-            vod_url,
-            download=True,
-        )
+        ydl.download([VOD_URL])
 
-        downloaded_path = Path(
-            ydl.prepare_filename(info)
-        )
+    downloaded_files = list(
+        OUTPUT_DIR.glob("source.*")
+    )
 
-    mp4_path = downloaded_path.with_suffix(".mp4")
-
-    if not mp4_path.exists():
+    if not downloaded_files:
         raise RuntimeError(
-            f"Downloaded video was not found: {mp4_path}"
+            "yt-dlp did not produce a downloaded file."
         )
 
-    print(f"VOD downloaded successfully: {mp4_path}")
+    source_file = downloaded_files[0]
 
-    return mp4_path
+    print(f"Downloaded source: {source_file}")
+
+    convert_to_mp4(source_file)
+
+    if not OUTPUT_FILE.exists():
+        raise RuntimeError(
+            f"Expected output file was not created: {OUTPUT_FILE}"
+        )
+
+    return OUTPUT_FILE
+
+
+def convert_to_mp4(source_file: Path) -> None:
+    print("Converting test segment to MP4...")
+
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source_file),
+            "-c",
+            "copy",
+            str(OUTPUT_FILE),
+        ],
+        check=True,
+    )
 
 
 def inspect_video(video_path: Path) -> None:
-    print("Inspecting downloaded video with FFprobe...")
+    print("Inspecting video with FFprobe...")
 
     result = subprocess.run(
         [
@@ -103,11 +108,13 @@ def inspect_video(video_path: Path) -> None:
 
 def main() -> int:
     try:
-        vod_url = get_latest_vod_url()
-
-        video_path = download_vod(vod_url)
+        video_path = download_vod_segment()
 
         inspect_video(video_path)
+
+        print()
+        print("Twitch VOD download test successful.")
+        print(f"Output: {video_path}")
 
         return 0
 
@@ -116,6 +123,7 @@ def main() -> int:
             f"ERROR: {exc}",
             file=sys.stderr,
         )
+
         return 1
 
 
