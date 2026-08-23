@@ -99,6 +99,13 @@ jobs:
         run: |
           python src/twitch_auth.py
 
+      - name: Test Twitch VOD discovery
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+        run: |
+          python src/twitch_vods.py
+
       - name: Environment test completed
         run: |
           echo "========================================="
@@ -110,4 +117,5 @@ jobs:
           echo "Whisper: OK"
           echo "Gemini SDK: OK"
           echo "Twitch authentication: OK"
+          echo "Twitch VOD discovery: OK"
           echo "========================================="
