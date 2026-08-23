@@ -30,7 +30,15 @@ def get_access_token() -> str:
     response.raise_for_status()
 
     data = response.json()
-    return data["access_token"]
+
+    access_token = data.get("access_token")
+
+    if not access_token:
+        raise RuntimeError(
+            "Twitch OAuth response did not contain an access token."
+        )
+
+    return access_token
 
 
 def get_user(access_token: str) -> dict:
@@ -58,7 +66,7 @@ def get_user(access_token: str) -> dict:
     return data[0]
 
 
-def get_vods(access_token: str, user_id: str) -> list[dict]:
+def get_latest_vod(access_token: str, user_id: str) -> dict | None:
     client_id = os.getenv("TWITCH_CLIENT_ID")
 
     response = requests.get(
@@ -70,14 +78,19 @@ def get_vods(access_token: str, user_id: str) -> list[dict]:
         params={
             "user_id": user_id,
             "type": "archive",
-            "first": 10,
+            "first": 1,
         },
         timeout=30,
     )
 
     response.raise_for_status()
 
-    return response.json().get("data", [])
+    vods = response.json().get("data", [])
+
+    if not vods:
+        return None
+
+    return vods[0]
 
 
 def main() -> int:
@@ -92,28 +105,30 @@ def main() -> int:
         print(f"Login: {user['login']}")
         print()
 
-        vods = get_vods(access_token, user["id"])
+        vod = get_latest_vod(
+            access_token,
+            user["id"],
+        )
 
-        print(f"VODs found: {len(vods)}")
-        print()
-
-        if not vods:
+        if vod is None:
             print("No VODs were found.")
             return 0
 
-        for index, vod in enumerate(vods, start=1):
-            print(f"VOD #{index}")
-            print(f"  ID: {vod['id']}")
-            print(f"  Title: {vod['title']}")
-            print(f"  Created: {vod['created_at']}")
-            print(f"  Duration: {vod['duration']}")
-            print(f"  Views: {vod['view_count']}")
-            print()
+        print("Latest VOD:")
+        print(f"  ID: {vod['id']}")
+        print(f"  Title: {vod['title']}")
+        print(f"  Created: {vod['created_at']}")
+        print(f"  Duration: {vod['duration']}")
+        print(f"  Views: {vod['view_count']}")
+        print(f"  URL: {vod['url']}")
 
         return 0
 
     except requests.HTTPError as exc:
-        print(f"Twitch API error: {exc}", file=sys.stderr)
+        print(
+            f"Twitch API error: {exc}",
+            file=sys.stderr,
+        )
 
         if exc.response is not None:
             print(
@@ -124,7 +139,11 @@ def main() -> int:
         return 1
 
     except Exception as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print(
+            f"ERROR: {exc}",
+            file=sys.stderr,
+        )
+
         return 1
 
 
