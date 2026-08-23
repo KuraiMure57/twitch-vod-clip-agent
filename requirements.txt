@@ -1,3 +1,4 @@
 openai-whisper
 google-genai
 requests
+yt-dlp
