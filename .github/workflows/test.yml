@@ -77,7 +77,10 @@ jobs:
           import whisper
 
           print("Whisper imported successfully.")
-          print(f"Whisper version: {getattr(whisper, '__version__', 'unknown')}")
+          print(
+              f"Whisper version: "
+              f"{getattr(whisper, '__version__', 'unknown')}"
+          )
           PY
 
       - name: Test Gemini SDK
@@ -89,6 +92,13 @@ jobs:
           print(f"Gemini SDK module: {genai.__name__}")
           PY
 
+      - name: Test Twitch authentication
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+        run: |
+          python src/twitch_auth.py
+
       - name: Environment test completed
         run: |
           echo "========================================="
@@ -99,4 +109,5 @@ jobs:
           echo "Git: OK"
           echo "Whisper: OK"
           echo "Gemini SDK: OK"
+          echo "Twitch authentication: OK"
           echo "========================================="
