@@ -5,6 +5,8 @@ from pathlib import Path
 import requests
 import yt_dlp
 
+from vod_state import is_vod_processed
+
 
 TWITCH_API_URL = "https://api.twitch.tv/helix"
 TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
@@ -21,7 +23,9 @@ def get_access_token() -> str:
     client_secret = os.getenv("TWITCH_CLIENT_SECRET")
 
     if not client_id or not client_secret:
-        raise RuntimeError("Twitch credentials are not configured.")
+        raise RuntimeError(
+            "Twitch credentials are not configured."
+        )
 
     response = requests.post(
         TWITCH_TOKEN_URL,
@@ -41,7 +45,8 @@ def get_access_token() -> str:
 
     if not access_token:
         raise RuntimeError(
-            "Twitch OAuth response did not contain an access token."
+            "Twitch OAuth response did not contain "
+            "an access token."
         )
 
     return access_token
@@ -94,7 +99,9 @@ def get_latest_vod(access_token: str) -> dict:
     vods = vod_response.json().get("data", [])
 
     if not vods:
-        raise RuntimeError("No Twitch VODs were found.")
+        raise RuntimeError(
+            "No Twitch VODs were found."
+        )
 
     return vods[0]
 
@@ -108,9 +115,11 @@ def download_vod_segment(vod: dict) -> Path:
     vod_url = vod["url"]
     vod_id = vod["id"]
 
-    output_file = OUTPUT_DIR / f"{vod_id}_test.mp4"
+    output_file = (
+        OUTPUT_DIR / f"{vod_id}_test.mp4"
+    )
 
-    temp_template = str(
+    temp_template = (
         OUTPUT_DIR / f"{vod_id}_source.%(ext)s"
     )
 
@@ -118,16 +127,18 @@ def download_vod_segment(vod: dict) -> Path:
 
     options = {
         "format": "best[ext=mp4]/best",
-        "outtmpl": temp_template,
+        "outtmpl": str(temp_template),
         "noplaylist": True,
         "quiet": False,
         "no_warnings": False,
-        "download_ranges": lambda info, ydl: [
-            {
-                "start_time": 0,
-                "end_time": test_duration_seconds,
-            }
-        ],
+        "download_ranges": (
+            lambda info, ydl: [
+                {
+                    "start_time": 0,
+                    "end_time": test_duration_seconds,
+                }
+            ]
+        ),
         "force_keyframes_at_cuts": True,
     }
 
@@ -135,15 +146,19 @@ def download_vod_segment(vod: dict) -> Path:
     print(f"Title: {vod['title']}")
     print(f"URL: {vod_url}")
     print()
+
     print(
-        f"Downloading first {test_duration_seconds} seconds..."
+        f"Downloading first "
+        f"{test_duration_seconds} seconds..."
     )
 
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download([vod_url])
 
     source_files = list(
-        OUTPUT_DIR.glob(f"{vod_id}_source.*")
+        OUTPUT_DIR.glob(
+            f"{vod_id}_source.*"
+        )
     )
 
     if not source_files:
@@ -153,9 +168,13 @@ def download_vod_segment(vod: dict) -> Path:
 
     source_file = source_files[0]
 
-    print(f"Downloaded source: {source_file}")
+    print(
+        f"Downloaded source: {source_file}"
+    )
 
-    print("Converting test segment to MP4...")
+    print(
+        "Converting test segment to MP4..."
+    )
 
     subprocess.run(
         [
@@ -172,14 +191,17 @@ def download_vod_segment(vod: dict) -> Path:
 
     if not output_file.exists():
         raise RuntimeError(
-            f"Expected output file was not created: {output_file}"
+            "Expected output file was not created: "
+            f"{output_file}"
         )
 
     return output_file
 
 
 def inspect_video(video_path: Path) -> None:
-    print("Inspecting video with FFprobe...")
+    print(
+        "Inspecting video with FFprobe..."
+    )
 
     result = subprocess.run(
         [
@@ -205,16 +227,55 @@ def main() -> int:
     try:
         access_token = get_access_token()
 
-        vod = get_latest_vod(access_token)
+        vod = get_latest_vod(
+            access_token
+        )
 
-        video_path = download_vod_segment(vod)
+        vod_id = str(vod["id"])
+
+        print(
+            f"Checking whether VOD {vod_id} "
+            "has already been processed..."
+        )
+
+        if is_vod_processed(vod_id):
+            print()
+            print(
+                f"VOD {vod_id} has already been "
+                "processed."
+            )
+            print(
+                "No download is necessary."
+            )
+
+            return 0
+
+        print(
+            f"VOD {vod_id} has NOT been processed."
+        )
+
+        print(
+            "Proceeding with test download..."
+        )
+        print()
+
+        video_path = download_vod_segment(
+            vod
+        )
 
         inspect_video(video_path)
 
         print()
-        print("Dynamic Twitch VOD download test successful.")
-        print(f"VOD ID: {vod['id']}")
-        print(f"Output: {video_path}")
+        print(
+            "VOD state detection and "
+            "download test successful."
+        )
+        print(
+            f"VOD ID: {vod_id}"
+        )
+        print(
+            f"Output: {video_path}"
+        )
 
         return 0
 
