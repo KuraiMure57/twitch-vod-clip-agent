@@ -140,8 +140,20 @@ jobs:
 
           git push
 
+      - name: Check downloaded VOD test
+        id: check-vod
+        run: |
+          if compgen -G "data/vod_test/*.mp4" > /dev/null; then
+            echo "downloaded=true" >> "$GITHUB_OUTPUT"
+            echo "A VOD test file was downloaded."
+          else
+            echo "downloaded=false" >> "$GITHUB_OUTPUT"
+            echo "No VOD test file was downloaded."
+            echo "This is expected when the latest VOD was already processed."
+          fi
+
       - name: Upload downloaded VOD test
-        if: success()
+        if: steps.check-vod.outputs.downloaded == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: twitch-vod-test
@@ -161,6 +173,5 @@ jobs:
           echo "Twitch authentication: OK"
           echo "Twitch VOD discovery: OK"
           echo "VOD state detection: OK"
-          echo "Twitch VOD download: OK"
-          echo "VOD state persistence: OK"
+          echo "Twitch VOD download/state: OK"
           echo "========================================="
