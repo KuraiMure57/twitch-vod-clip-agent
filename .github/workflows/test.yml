@@ -111,10 +111,11 @@ jobs:
         run: |
           python src/twitch_vods.py
 
-      - name: Test VOD state and download
+      - name: Test VOD download
         env:
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          FORCE_VOD_TEST_DOWNLOAD: "true"
         run: |
           python src/twitch_vod_downloader.py
 
@@ -123,50 +124,13 @@ jobs:
           echo "Current processed VOD state:"
           cat data/processed_vods.json
 
-      - name: Commit processed VOD state
-        run: |
-          if git diff --quiet -- data/processed_vods.json; then
-            echo "No VOD state changes to commit."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add data/processed_vods.json
-
-          git commit \
-            -m "Mark VOD as processed"
-
-          git push
-
       - name: Check downloaded VOD test
-        id: check-vod
-        run: |
-          if compgen -G "data/vod_test/*.mp4" > /dev/null; then
-            echo "downloaded=true" >> "$GITHUB_OUTPUT"
-            echo "A VOD test file was downloaded."
-          else
-            echo "downloaded=false" >> "$GITHUB_OUTPUT"
-            echo "No VOD test file was downloaded."
-            echo "The VOD may already be marked as processed."
-          fi
-
-      - name: Restore VOD test artifact
-        if: steps.check-vod.outputs.downloaded != 'true'
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: twitch-vod-test
-          path: data/vod_test
-
-      - name: Check Whisper input
         run: |
           echo "Available VOD test files:"
-          find data/vod_test -maxdepth 1 -type f -print || true
+          find data/vod_test -maxdepth 1 -type f -print
 
           if ! compgen -G "data/vod_test/*.mp4" > /dev/null; then
-            echo "ERROR: No VOD test MP4 is available for Whisper."
+            echo "ERROR: No VOD test MP4 was downloaded."
             exit 1
           fi
 
@@ -191,7 +155,6 @@ jobs:
           if-no-files-found: error
 
       - name: Upload downloaded VOD test
-        if: steps.check-vod.outputs.downloaded == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: twitch-vod-test
@@ -210,7 +173,6 @@ jobs:
           echo "Gemini SDK: OK"
           echo "Twitch authentication: OK"
           echo "Twitch VOD discovery: OK"
-          echo "VOD state detection: OK"
-          echo "Twitch VOD download/state: OK"
+          echo "Twitch VOD download: OK"
           echo "Whisper transcription: OK"
           echo "========================================="
