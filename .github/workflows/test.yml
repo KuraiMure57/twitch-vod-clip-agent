@@ -107,6 +107,9 @@ jobs:
           python src/twitch_vods.py
 
       - name: Test Twitch VOD download
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
         run: |
           python src/twitch_vod_downloader.py
 
@@ -115,7 +118,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: twitch-vod-test
-          path: data/vod_test/vod_test.mp4
+          path: data/vod_test/*.mp4
           if-no-files-found: error
 
       - name: Environment test completed
