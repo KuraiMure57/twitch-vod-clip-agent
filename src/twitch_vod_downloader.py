@@ -5,7 +5,10 @@ from pathlib import Path
 import requests
 import yt_dlp
 
-from vod_state import is_vod_processed
+from vod_state import (
+    is_vod_processed,
+    mark_vod_as_processed,
+)
 
 
 TWITCH_API_URL = "https://api.twitch.tv/helix"
@@ -250,6 +253,7 @@ def main() -> int:
 
             return 0
 
+        print()
         print(
             f"VOD {vod_id} has NOT been processed."
         )
@@ -266,9 +270,11 @@ def main() -> int:
         inspect_video(video_path)
 
         print()
+
+        mark_vod_as_processed(vod_id)
+
         print(
-            "VOD state detection and "
-            "download test successful."
+            "VOD state persistence test successful."
         )
         print(
             f"VOD ID: {vod_id}"
