@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,8 +21,6 @@ OUTPUT_DIR = Path("data/vod_test")
 
 
 def get_access_token() -> str:
-    import os
-
     client_id = os.getenv("TWITCH_CLIENT_ID")
     client_secret = os.getenv("TWITCH_CLIENT_SECRET")
 
@@ -56,8 +55,6 @@ def get_access_token() -> str:
 
 
 def get_latest_vod(access_token: str) -> dict:
-    import os
-
     client_id = os.getenv("TWITCH_CLIENT_ID")
 
     user_response = requests.get(
@@ -236,6 +233,14 @@ def main() -> int:
 
         vod_id = str(vod["id"])
 
+        force_test_download = (
+            os.getenv(
+                "FORCE_VOD_TEST_DOWNLOAD",
+                ""
+            ).lower()
+            == "true"
+        )
+
         print(
             f"Checking whether VOD {vod_id} "
             "has already been processed..."
@@ -243,25 +248,39 @@ def main() -> int:
 
         if is_vod_processed(vod_id):
             print()
+
+            if force_test_download:
+                print(
+                    f"VOD {vod_id} has already been "
+                    "processed."
+                )
+                print(
+                    "FORCE_VOD_TEST_DOWNLOAD=true"
+                )
+                print(
+                    "Forcing test download without "
+                    "changing VOD state."
+                )
+                print()
+            else:
+                print(
+                    f"VOD {vod_id} has already been "
+                    "processed."
+                )
+                print(
+                    "No download is necessary."
+                )
+
+                return 0
+        else:
+            print()
             print(
-                f"VOD {vod_id} has already been "
-                "processed."
+                f"VOD {vod_id} has NOT been processed."
             )
             print(
-                "No download is necessary."
+                "Proceeding with test download..."
             )
-
-            return 0
-
-        print()
-        print(
-            f"VOD {vod_id} has NOT been processed."
-        )
-
-        print(
-            "Proceeding with test download..."
-        )
-        print()
+            print()
 
         video_path = download_vod_segment(
             vod
@@ -271,11 +290,20 @@ def main() -> int:
 
         print()
 
-        mark_vod_as_processed(vod_id)
+        if force_test_download:
+            print(
+                "Forced VOD test download completed."
+            )
+            print(
+                "Processed VOD state was NOT modified."
+            )
+        else:
+            mark_vod_as_processed(vod_id)
 
-        print(
-            "VOD state persistence test successful."
-        )
+            print(
+                "VOD state persistence test successful."
+            )
+
         print(
             f"VOD ID: {vod_id}"
         )
