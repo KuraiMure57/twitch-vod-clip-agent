@@ -49,9 +49,15 @@ def mark_vod_as_processed(vod_id: str) -> None:
             ensure_ascii=False,
         )
 
+    print(
+        f"VOD {vod_id} marked as processed."
+    )
+
 
 if __name__ == "__main__":
-    print("Processed VOD state module is working.")
+    print(
+        "Processed VOD state module is working."
+    )
 
     processed = load_processed_vods()
 
