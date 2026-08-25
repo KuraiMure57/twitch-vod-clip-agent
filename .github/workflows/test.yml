@@ -3,6 +3,9 @@ name: Initial Environment Test
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test-environment:
     runs-on: ubuntu-latest
@@ -106,7 +109,7 @@ jobs:
         run: |
           python src/twitch_vods.py
 
-      - name: Test Twitch VOD download
+      - name: Test VOD state and download
         env:
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
@@ -133,5 +136,6 @@ jobs:
           echo "Gemini SDK: OK"
           echo "Twitch authentication: OK"
           echo "Twitch VOD discovery: OK"
+          echo "VOD state detection: OK"
           echo "Twitch VOD download: OK"
           echo "========================================="
