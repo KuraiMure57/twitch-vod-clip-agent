@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test-environment:
@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Show system information
         run: |
@@ -116,6 +118,28 @@ jobs:
         run: |
           python src/twitch_vod_downloader.py
 
+      - name: Show VOD state
+        run: |
+          echo "Current processed VOD state:"
+          cat data/processed_vods.json
+
+      - name: Commit processed VOD state
+        run: |
+          if git diff --quiet -- data/processed_vods.json; then
+            echo "No VOD state changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add data/processed_vods.json
+
+          git commit \
+            -m "Mark VOD as processed"
+
+          git push
+
       - name: Upload downloaded VOD test
         if: success()
         uses: actions/upload-artifact@v4
@@ -138,4 +162,5 @@ jobs:
           echo "Twitch VOD discovery: OK"
           echo "VOD state detection: OK"
           echo "Twitch VOD download: OK"
+          echo "VOD state persistence: OK"
           echo "========================================="
