@@ -149,8 +149,46 @@ jobs:
           else
             echo "downloaded=false" >> "$GITHUB_OUTPUT"
             echo "No VOD test file was downloaded."
-            echo "This is expected when the latest VOD was already processed."
+            echo "The VOD may already be marked as processed."
           fi
+
+      - name: Restore VOD test artifact
+        if: steps.check-vod.outputs.downloaded != 'true'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: twitch-vod-test
+          path: data/vod_test
+
+      - name: Check Whisper input
+        run: |
+          echo "Available VOD test files:"
+          find data/vod_test -maxdepth 1 -type f -print || true
+
+          if ! compgen -G "data/vod_test/*.mp4" > /dev/null; then
+            echo "ERROR: No VOD test MP4 is available for Whisper."
+            exit 1
+          fi
+
+      - name: Run Whisper transcription
+        run: |
+          python src/whisper_transcriber.py
+
+      - name: Show transcription
+        run: |
+          echo "========================================="
+          echo "Whisper transcription:"
+          echo "========================================="
+          cat data/transcriptions/2846005700_test.json
+          echo
+          echo "========================================="
+
+      - name: Upload Whisper transcription
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-transcription-test
+          path: data/transcriptions/*.json
+          if-no-files-found: error
 
       - name: Upload downloaded VOD test
         if: steps.check-vod.outputs.downloaded == 'true'
@@ -174,4 +212,5 @@ jobs:
           echo "Twitch VOD discovery: OK"
           echo "VOD state detection: OK"
           echo "Twitch VOD download/state: OK"
+          echo "Whisper transcription: OK"
           echo "========================================="
