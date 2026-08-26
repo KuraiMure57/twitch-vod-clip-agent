@@ -18,7 +18,7 @@ OUTPUT_FILE = (
     OUTPUT_DIR / "2846005700_candidates.json"
 )
 
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.6-flash"
 
 
 ANALYSIS_PROMPT = """
