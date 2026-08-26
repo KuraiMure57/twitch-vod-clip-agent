@@ -22,63 +22,157 @@ MODEL_NAME = "gemini-3.6-flash"
 
 
 ANALYSIS_PROMPT = """
-Eres un analista especializado en contenido para Twitch y clips cortos.
+Eres un analista especializado en detectar clips virales de Twitch.
 
-Vas a recibir la transcripción de un stream de Twitch.
+Vas a recibir la transcripción de un stream de Twitch junto con timestamps.
 
-Tu trabajo es identificar momentos que podrían funcionar bien como clips
-de Twitch y posteriormente como contenido corto para TikTok.
+Tu objetivo es encontrar MOMENTOS POTENCIALES PARA CLIPS.
+
+IMPORTANTE:
+La transcripción procede de reconocimiento automático de voz (Whisper)
+y puede contener errores, palabras mal reconocidas, frases incompletas,
+mezcla de idiomas o texto extraño.
+
+NO debes descartar automáticamente un momento simplemente porque la
+transcripción tenga errores.
+
+Debes analizar el contexto disponible y buscar señales de que está
+ocurriendo algo interesante.
 
 Busca especialmente:
 
-- momentos graciosos;
-- sustos o reacciones fuertes;
+- reacciones fuertes;
+- gritos;
+- sustos;
+- sorpresa;
 - momentos inesperados;
-- errores o fails;
-- situaciones tensas;
-- comentarios espontáneos interesantes;
-- momentos de sorpresa;
-- interacciones que tengan potencial para entretener;
-- momentos que tengan contexto suficiente para entenderse como clip.
+- fails;
+- errores;
+- situaciones absurdas;
+- comentarios graciosos;
+- descubrimientos;
+- tensión;
+- frustración;
+- celebraciones;
+- momentos relacionados con el juego;
+- frases espontáneas que puedan funcionar como meme;
+- cualquier cambio claro respecto a una conversación normal.
 
-NO inventes acontecimientos que no aparecen en la transcripción.
+También presta atención a:
 
-Utiliza los timestamps de los segmentos para localizar cada momento.
+- repeticiones repentinas;
+- frases cortas después de una pausa;
+- cambios bruscos de tono que puedan inferirse del texto;
+- palabras que indiquen sorpresa, miedo, enfado o celebración;
+- secuencias que parezcan formar una situación completa.
+
+NO inventes acontecimientos.
+
+Si la transcripción es ambigua, puedes marcar el candidato con una
+confidence menor, pero no lo descartes únicamente por errores de Whisper.
+
+El candidato debe corresponder a algo que realmente aparece en la
+transcripción.
+
+DURACIÓN:
+
+Los clips ideales deben durar entre 15 y 60 segundos.
+
+Intenta incluir suficiente contexto para que el momento pueda entenderse
+por sí mismo.
+
+No cortes una frase importante.
+
+TIMESTAMPS:
+
+Utiliza exclusivamente los timestamps proporcionados por los segmentos.
+
+El inicio debe coincidir aproximadamente con el comienzo del momento.
+
+El final debe dejar suficiente contexto para cerrar la situación.
+
+PUNTUACIÓN:
+
+score 90-100:
+Momento claramente excepcional, muy gracioso, sorprendente, intenso o
+con gran potencial para TikTok.
+
+score 80-89:
+Muy buen momento con potencial claro para clip.
+
+score 70-79:
+Momento interesante que podría funcionar.
+
+score 60-69:
+Momento posiblemente interesante pero con dudas.
+
+score <60:
+No lo devuelvas.
+
+REGLAS IMPORTANTES:
+
+1. No devuelvas conversación completamente normal.
+2. No inventes lo que está ocurriendo.
+3. No devuelvas demasiados candidatos.
+4. Prioriza calidad sobre cantidad.
+5. Si existe al menos un momento razonablemente interesante, intenta
+   devolverlo.
+6. Los errores de transcripción NO son motivo suficiente para descartar
+   un momento.
+7. Un candidato puede contener texto parcialmente incomprensible si el
+   contexto alrededor indica que puede ser un momento relevante.
+8. Evita candidatos demasiado cortos.
+9. Evita candidatos excesivamente largos.
+10. No agrupes todo el vídeo en un único candidato salvo que realmente
+    exista una situación continua.
 
 Para cada candidato devuelve:
 
-- start: segundo aproximado de inicio;
-- end: segundo aproximado de final;
-- score: puntuación de 0 a 100;
-- category: categoría del momento;
-- reason: explicación breve de por qué puede funcionar;
-- title: título corto y atractivo;
+- start: segundo aproximado de inicio.
+- end: segundo aproximado de final.
+- score: puntuación de 0 a 100.
+- category: categoría.
+- reason: explicación breve.
+- title: título corto y atractivo para un clip.
 - confidence: confianza de 0 a 1.
 
-Reglas:
+Categorías posibles:
 
-1. No devuelvas momentos que sean simplemente conversación normal.
-2. No devuelvas demasiados candidatos.
-3. Es mejor devolver pocos candidatos buenos que muchos candidatos mediocres.
-4. El momento debe tener un principio y un final razonables.
-5. El clip debería poder entenderse por sí mismo.
-6. La puntuación debe reflejar el potencial real del momento.
-7. Si no existe ningún momento interesante, devuelve una lista vacía.
+- susto
+- reacción
+- sorpresa
+- fail
+- humor
+- tensión
+- celebración
+- descubrimiento
+- momento_inesperado
+- comentario
+- gameplay
+- otro
 
-Devuelve ÚNICAMENTE JSON válido con esta estructura:
+Devuelve ÚNICAMENTE JSON válido.
+
+Estructura exacta:
 
 {
   "candidates": [
     {
-      "start": 0,
-      "end": 30,
-      "score": 85,
-      "category": "susto",
-      "reason": "Descripción breve.",
-      "title": "Título del clip",
-      "confidence": 0.92
+      "start": 10,
+      "end": 35,
+      "score": 82,
+      "category": "reacción",
+      "reason": "La reacción cambia claramente respecto al contexto anterior.",
+      "title": "No se esperaba eso",
+      "confidence": 0.78
     }
   ]
+}
+
+Si realmente no hay ningún momento que pueda funcionar como clip:
+
+{
+  "candidates": []
 }
 """
 
@@ -177,11 +271,13 @@ def analyze_transcription(
         result = json.loads(
             response.text
         )
+
     except json.JSONDecodeError as exc:
         print(
             "Gemini raw response:",
             file=sys.stderr,
         )
+
         print(
             response.text,
             file=sys.stderr,
@@ -274,7 +370,9 @@ def validate_candidates(
             )
 
 
-def save_result(result: dict) -> None:
+def save_result(
+    result: dict,
+) -> None:
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
@@ -337,13 +435,16 @@ def main() -> int:
         print(
             "Gemini analysis completed."
         )
+
         print(
             f"Candidates found: "
             f"{len(candidates)}"
         )
+
         print(
             f"Output: {OUTPUT_FILE}"
         )
+
         print()
 
         for index, candidate in enumerate(
@@ -353,34 +454,42 @@ def main() -> int:
             print(
                 f"Candidate #{index}"
             )
+
             print(
                 f"  Start: "
                 f"{candidate['start']}"
             )
+
             print(
                 f"  End: "
                 f"{candidate['end']}"
             )
+
             print(
                 f"  Score: "
                 f"{candidate['score']}"
             )
+
             print(
                 f"  Category: "
                 f"{candidate['category']}"
             )
+
             print(
                 f"  Title: "
                 f"{candidate['title']}"
             )
+
             print(
                 f"  Reason: "
                 f"{candidate['reason']}"
             )
+
             print(
                 f"  Confidence: "
                 f"{candidate['confidence']}"
             )
+
             print()
 
         return 0
@@ -390,6 +499,7 @@ def main() -> int:
             f"ERROR: {exc}",
             file=sys.stderr,
         )
+
         return 1
 
 
