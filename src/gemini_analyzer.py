@@ -22,121 +22,127 @@ MODEL_NAME = "gemini-3.6-flash"
 
 
 ANALYSIS_PROMPT = """
-Eres un analista especializado en detectar clips virales de Twitch.
+Eres un analista de streams de Twitch especializado en encontrar
+momentos que puedan convertirse en clips.
 
-Vas a recibir la transcripción de un stream de Twitch junto con timestamps.
-
-Tu objetivo es encontrar MOMENTOS POTENCIALES PARA CLIPS.
+Vas a recibir una transcripción automática de Whisper con timestamps.
 
 IMPORTANTE:
-La transcripción procede de reconocimiento automático de voz (Whisper)
-y puede contener errores, palabras mal reconocidas, frases incompletas,
-mezcla de idiomas o texto extraño.
+La transcripción puede contener errores graves de reconocimiento.
+Puede haber palabras incorrectas, frases incompletas, palabras
+inventadas, repeticiones o texto extraño.
 
-NO debes descartar automáticamente un momento simplemente porque la
-transcripción tenga errores.
+NO intentes corregir la transcripción.
+NO descartes un posible momento simplemente porque el texto sea raro.
 
-Debes analizar el contexto disponible y buscar señales de que está
-ocurriendo algo interesante.
+Tu tarea en esta fase es hacer una PRIMERA DETECCIÓN AMPLIA de momentos
+que MEREZCA LA PENA REVISAR posteriormente.
 
-Busca especialmente:
+Busca cualquier cambio o situación potencialmente interesante, como:
 
-- reacciones fuertes;
-- gritos;
-- sustos;
-- sorpresa;
-- momentos inesperados;
-- fails;
-- errores;
-- situaciones absurdas;
-- comentarios graciosos;
-- descubrimientos;
-- tensión;
+- una reacción;
+- una sorpresa;
+- una exclamación;
+- un susto;
+- una frase graciosa;
+- un fail;
+- una situación absurda;
 - frustración;
-- celebraciones;
-- momentos relacionados con el juego;
-- frases espontáneas que puedan funcionar como meme;
-- cualquier cambio claro respecto a una conversación normal.
+- celebración;
+- tensión;
+- descubrimiento;
+- comentario espontáneo;
+- repetición extraña;
+- cambio repentino en la conversación;
+- una frase que pueda tener contexto de gameplay;
+- cualquier momento que pueda tener potencial para un clip.
 
-También presta atención a:
+NO necesitas estar seguro de que sea viral.
 
-- repeticiones repentinas;
-- frases cortas después de una pausa;
-- cambios bruscos de tono que puedan inferirse del texto;
-- palabras que indiquen sorpresa, miedo, enfado o celebración;
-- secuencias que parezcan formar una situación completa.
+Es preferible incluir un posible candidato dudoso antes que perder un
+momento potencialmente bueno.
 
 NO inventes acontecimientos.
 
-Si la transcripción es ambigua, puedes marcar el candidato con una
-confidence menor, pero no lo descartes únicamente por errores de Whisper.
-
-El candidato debe corresponder a algo que realmente aparece en la
-transcripción.
+Los candidatos deben basarse únicamente en el texto y timestamps
+proporcionados.
 
 DURACIÓN:
 
-Los clips ideales deben durar entre 15 y 60 segundos.
+Los candidatos deben tener entre 15 y 60 segundos siempre que sea
+posible.
 
-Intenta incluir suficiente contexto para que el momento pueda entenderse
-por sí mismo.
+Incluye contexto suficiente para que el momento pueda entenderse.
 
 No cortes una frase importante.
 
 TIMESTAMPS:
 
-Utiliza exclusivamente los timestamps proporcionados por los segmentos.
+Utiliza los timestamps de los segmentos.
 
-El inicio debe coincidir aproximadamente con el comienzo del momento.
+El start debe comenzar cerca del inicio del momento interesante.
 
-El final debe dejar suficiente contexto para cerrar la situación.
+El end debe terminar cuando la situación haya terminado o cuando
+exista suficiente contexto.
 
 PUNTUACIÓN:
 
-score 90-100:
-Momento claramente excepcional, muy gracioso, sorprendente, intenso o
-con gran potencial para TikTok.
+La puntuación representa POTENCIAL, no certeza.
 
-score 80-89:
-Muy buen momento con potencial claro para clip.
+90-100 = potencial excepcional
+80-89 = potencial alto
+70-79 = potencial moderado
+60-69 = posible candidato
+0-59 = no devolver
 
-score 70-79:
-Momento interesante que podría funcionar.
+En esta fase puedes devolver candidatos desde 60 puntos.
 
-score 60-69:
-Momento posiblemente interesante pero con dudas.
+CONFIDENCE:
 
-score <60:
-No lo devuelvas.
+Indica cuánto confías en que realmente exista un momento interesante.
 
-REGLAS IMPORTANTES:
+No confundas confidence con score.
 
-1. No devuelvas conversación completamente normal.
-2. No inventes lo que está ocurriendo.
-3. No devuelvas demasiados candidatos.
-4. Prioriza calidad sobre cantidad.
-5. Si existe al menos un momento razonablemente interesante, intenta
-   devolverlo.
-6. Los errores de transcripción NO son motivo suficiente para descartar
-   un momento.
-7. Un candidato puede contener texto parcialmente incomprensible si el
-   contexto alrededor indica que puede ser un momento relevante.
-8. Evita candidatos demasiado cortos.
-9. Evita candidatos excesivamente largos.
-10. No agrupes todo el vídeo en un único candidato salvo que realmente
-    exista una situación continua.
+Un momento puede tener:
+- score alto pero confidence bajo si parece muy interesante pero la
+  transcripción es difícil de entender.
+- score moderado y confidence alto si sabes exactamente qué está
+  ocurriendo pero no parece especialmente espectacular.
+
+REGLAS:
+
+1. NO devuelvas conversación completamente plana si no existe ninguna
+   señal de interés.
+
+2. Si hay cualquier señal razonable de reacción, sorpresa, humor,
+   gameplay, tensión o situación inesperada, considérala candidata.
+
+3. No seas excesivamente conservador.
+
+4. No agrupes automáticamente todo el vídeo.
+
+5. Un candidato puede solaparse ligeramente con otro si representan
+   posibles momentos diferentes.
+
+6. Máximo 5 candidatos.
+
+7. Si solo existe un posible momento, devuelve ese momento aunque la
+   confianza no sea alta.
+
+8. No devuelvas una lista vacía simplemente porque la transcripción
+   tenga errores.
 
 Para cada candidato devuelve:
 
-- start: segundo aproximado de inicio.
-- end: segundo aproximado de final.
-- score: puntuación de 0 a 100.
-- category: categoría.
-- reason: explicación breve.
-- title: título corto y atractivo para un clip.
-- confidence: confianza de 0 a 1.
+- start
+- end
+- score
+- category
+- reason
+- title
+- confidence
 
-Categorías posibles:
+Categorías:
 
 - susto
 - reacción
@@ -153,29 +159,29 @@ Categorías posibles:
 
 Devuelve ÚNICAMENTE JSON válido.
 
-Estructura exacta:
+Formato:
 
 {
   "candidates": [
     {
       "start": 10,
-      "end": 35,
-      "score": 82,
+      "end": 30,
+      "score": 72,
       "category": "reacción",
-      "reason": "La reacción cambia claramente respecto al contexto anterior.",
-      "title": "No se esperaba eso",
-      "confidence": 0.78
+      "reason": "Existe un cambio repentino en la conversación que podría corresponder a una reacción.",
+      "title": "¿Pero qué acaba de pasar?",
+      "confidence": 0.55
     }
   ]
 }
 
-Si realmente no hay ningún momento que pueda funcionar como clip:
+Si después de revisar TODA la transcripción no existe absolutamente
+ninguna señal que pueda justificar un candidato, devuelve:
 
 {
   "candidates": []
 }
 """
-
 
 def load_transcription() -> dict:
     if not INPUT_FILE.exists():
