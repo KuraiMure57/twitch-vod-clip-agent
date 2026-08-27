@@ -17,7 +17,7 @@ TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 
 CHANNEL_NAME = "kuraimure57"
 
-OUTPUT_DIR = Path("data/vod_test")
+OUTPUT_DIR = Path("data/vods")
 
 
 def get_access_token() -> str:
@@ -71,11 +71,15 @@ def get_latest_vod(access_token: str) -> dict:
 
     user_response.raise_for_status()
 
-    users = user_response.json().get("data", [])
+    users = user_response.json().get(
+        "data",
+        [],
+    )
 
     if not users:
         raise RuntimeError(
-            f"Twitch channel '{CHANNEL_NAME}' was not found."
+            f"Twitch channel '{CHANNEL_NAME}' "
+            "was not found."
         )
 
     user_id = users[0]["id"]
@@ -96,7 +100,10 @@ def get_latest_vod(access_token: str) -> dict:
 
     vod_response.raise_for_status()
 
-    vods = vod_response.json().get("data", [])
+    vods = vod_response.json().get(
+        "data",
+        [],
+    )
 
     if not vods:
         raise RuntimeError(
@@ -106,24 +113,52 @@ def get_latest_vod(access_token: str) -> dict:
     return vods[0]
 
 
-def download_vod_segment(vod: dict) -> Path:
+def download_vod(vod: dict) -> Path:
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     vod_url = vod["url"]
-    vod_id = vod["id"]
+    vod_id = str(vod["id"])
 
     output_file = (
-        OUTPUT_DIR / f"{vod_id}_test.mp4"
+        OUTPUT_DIR / f"{vod_id}.mp4"
     )
 
     temp_template = (
         OUTPUT_DIR / f"{vod_id}_source.%(ext)s"
     )
 
-    test_duration_seconds = 60
+    if output_file.exists():
+        print(
+            f"VOD file already exists: "
+            f"{output_file}"
+        )
+
+        return output_file
+
+    print(
+        f"Selected VOD: {vod_id}"
+    )
+
+    print(
+        f"Title: {vod['title']}"
+    )
+
+    print(
+        f"Duration: {vod.get('duration', 'unknown')}"
+    )
+
+    print(
+        f"URL: {vod_url}"
+    )
+
+    print()
+
+    print(
+        "Downloading complete VOD..."
+    )
 
     options = {
         "format": "best[ext=mp4]/best",
@@ -131,26 +166,7 @@ def download_vod_segment(vod: dict) -> Path:
         "noplaylist": True,
         "quiet": False,
         "no_warnings": False,
-        "download_ranges": (
-            lambda info, ydl: [
-                {
-                    "start_time": 0,
-                    "end_time": test_duration_seconds,
-                }
-            ]
-        ),
-        "force_keyframes_at_cuts": True,
     }
-
-    print(f"Selected VOD: {vod_id}")
-    print(f"Title: {vod['title']}")
-    print(f"URL: {vod_url}")
-    print()
-
-    print(
-        f"Downloading first "
-        f"{test_duration_seconds} seconds..."
-    )
 
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download([vod_url])
@@ -168,12 +184,13 @@ def download_vod_segment(vod: dict) -> Path:
 
     source_file = source_files[0]
 
+    print()
     print(
         f"Downloaded source: {source_file}"
     )
 
     print(
-        "Converting test segment to MP4..."
+        "Converting complete VOD to MP4..."
     )
 
     subprocess.run(
@@ -195,12 +212,18 @@ def download_vod_segment(vod: dict) -> Path:
             f"{output_file}"
         )
 
+    print()
+    print(
+        f"Complete VOD available at: "
+        f"{output_file}"
+    )
+
     return output_file
 
 
 def inspect_video(video_path: Path) -> None:
     print(
-        "Inspecting video with FFprobe..."
+        "Inspecting complete VOD with FFprobe..."
     )
 
     result = subprocess.run(
@@ -219,8 +242,13 @@ def inspect_video(video_path: Path) -> None:
         check=True,
     )
 
-    print("FFprobe result:")
-    print(result.stdout)
+    print()
+    print(
+        "FFprobe result:"
+    )
+    print(
+        result.stdout
+    )
 
 
 def main() -> int:
@@ -231,12 +259,14 @@ def main() -> int:
             access_token
         )
 
-        vod_id = str(vod["id"])
+        vod_id = str(
+            vod["id"]
+        )
 
-        force_test_download = (
+        force_download = (
             os.getenv(
-                "FORCE_VOD_TEST_DOWNLOAD",
-                ""
+                "FORCE_VOD_DOWNLOAD",
+                "",
             ).lower()
             == "true"
         )
@@ -249,64 +279,79 @@ def main() -> int:
         if is_vod_processed(vod_id):
             print()
 
-            if force_test_download:
+            if not force_download:
                 print(
-                    f"VOD {vod_id} has already been "
-                    "processed."
+                    f"VOD {vod_id} has already "
+                    "been processed."
                 )
-                print(
-                    "FORCE_VOD_TEST_DOWNLOAD=true"
-                )
-                print(
-                    "Forcing test download without "
-                    "changing VOD state."
-                )
-                print()
-            else:
-                print(
-                    f"VOD {vod_id} has already been "
-                    "processed."
-                )
+
                 print(
                     "No download is necessary."
                 )
 
                 return 0
+
+            print(
+                f"VOD {vod_id} has already "
+                "been processed."
+            )
+
+            print(
+                "FORCE_VOD_DOWNLOAD=true"
+            )
+
+            print(
+                "Forcing complete VOD download "
+                "without changing VOD state."
+            )
+
+            print()
+
         else:
             print()
             print(
                 f"VOD {vod_id} has NOT been processed."
             )
+
             print(
-                "Proceeding with test download..."
+                "Proceeding with complete VOD download..."
             )
+
             print()
 
-        video_path = download_vod_segment(
+        video_path = download_vod(
             vod
         )
 
-        inspect_video(video_path)
+        inspect_video(
+            video_path
+        )
 
         print()
 
-        if force_test_download:
+        if force_download:
             print(
-                "Forced VOD test download completed."
+                "Forced complete VOD download completed."
             )
+
             print(
                 "Processed VOD state was NOT modified."
             )
-        else:
-            mark_vod_as_processed(vod_id)
 
-            print(
-                "VOD state persistence test successful."
+        else:
+            mark_vod_as_processed(
+                vod_id
             )
 
+            print(
+                "VOD state persistence successful."
+            )
+
+        print()
         print(
             f"VOD ID: {vod_id}"
         )
+
         print(
             f"Output: {video_path}"
         )
