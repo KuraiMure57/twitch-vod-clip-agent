@@ -5,20 +5,15 @@ from pathlib import Path
 import whisper
 
 
-INPUT_VIDEO = Path(
-    "data/vod_test/2846005700_test.mp4"
+VOD_DIR = Path(
+    "data/vods"
 )
 
 OUTPUT_DIR = Path(
     "data/transcriptions"
 )
 
-OUTPUT_FILE = (
-    OUTPUT_DIR / "2846005700_test.json"
-)
-
 MODEL_NAME = "small"
-
 
 INITIAL_PROMPT = """
 Transcripción en español de un stream de Twitch de videojuegos.
@@ -28,15 +23,33 @@ y terminología habitual de videojuegos.
 """
 
 
-def transcribe_video() -> None:
-    if not INPUT_VIDEO.exists():
+def find_vod() -> Path:
+    vod_files = sorted(
+        VOD_DIR.glob("*.mp4"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+    if not vod_files:
         raise FileNotFoundError(
-            f"Input video not found: {INPUT_VIDEO}"
+            f"No MP4 VOD files found in: {VOD_DIR}"
         )
 
+    return vod_files[0]
+
+
+def transcribe_video(
+    input_video: Path,
+) -> Path:
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
+    )
+
+    vod_id = input_video.stem
+
+    output_file = (
+        OUTPUT_DIR / f"{vod_id}.json"
     )
 
     print(
@@ -47,12 +60,19 @@ def transcribe_video() -> None:
         MODEL_NAME
     )
 
+    print()
     print(
-        f"Transcribing: {INPUT_VIDEO}"
+        f"Transcribing complete VOD:"
     )
 
+    print(
+        input_video
+    )
+
+    print()
+
     result = model.transcribe(
-        str(INPUT_VIDEO),
+        str(input_video),
         language="es",
         task="transcribe",
         fp16=False,
@@ -63,7 +83,7 @@ def transcribe_video() -> None:
     )
 
     output = {
-        "video": str(INPUT_VIDEO),
+        "video": str(input_video),
         "model": MODEL_NAME,
         "language": result.get(
             "language",
@@ -79,7 +99,7 @@ def transcribe_video() -> None:
         ),
     }
 
-    with OUTPUT_FILE.open(
+    with output_file.open(
         "w",
         encoding="utf-8",
     ) as file:
@@ -94,25 +114,44 @@ def transcribe_video() -> None:
     print(
         "Whisper transcription completed."
     )
+
     print(
-        f"Output: {OUTPUT_FILE}"
+        f"Output: {output_file}"
     )
+
     print(
         f"Detected language: "
         f"{output['language']}"
     )
+
     print(
         f"Segments: "
         f"{len(output['segments'])}"
     )
+
+    print(
+        f"Characters: "
+        f"{len(output['text'])}"
+    )
+
     print()
-    print("Transcription:")
-    print(output["text"])
+
+    return output_file
 
 
 def main() -> int:
     try:
-        transcribe_video()
+        input_video = find_vod()
+
+        print(
+            f"Selected VOD for transcription: "
+            f"{input_video}"
+        )
+
+        transcribe_video(
+            input_video
+        )
+
         return 0
 
     except Exception as exc:
@@ -120,6 +159,7 @@ def main() -> int:
             f"ERROR: {exc}",
             file=sys.stderr,
         )
+
         return 1
 
 
