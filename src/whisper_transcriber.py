@@ -17,7 +17,7 @@ OUTPUT_FILE = (
     OUTPUT_DIR / "2846005700_test.json"
 )
 
-MODEL_NAME = "tiny"
+MODEL_NAME = "base"
 
 
 def transcribe_video() -> None:
