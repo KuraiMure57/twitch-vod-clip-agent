@@ -17,7 +17,15 @@ OUTPUT_FILE = (
     OUTPUT_DIR / "2846005700_test.json"
 )
 
-MODEL_NAME = "base"
+MODEL_NAME = "small"
+
+
+INITIAL_PROMPT = """
+Transcripción en español de un stream de Twitch de videojuegos.
+El hablante puede utilizar lenguaje coloquial, nombres de videojuegos,
+personajes, objetos, enemigos, habilidades, drops, clips, gameplay
+y terminología habitual de videojuegos.
+"""
 
 
 def transcribe_video() -> None:
@@ -46,8 +54,12 @@ def transcribe_video() -> None:
     result = model.transcribe(
         str(INPUT_VIDEO),
         language="es",
+        task="transcribe",
         fp16=False,
         verbose=True,
+        temperature=0,
+        condition_on_previous_text=False,
+        initial_prompt=INITIAL_PROMPT,
     )
 
     output = {
