@@ -57,11 +57,6 @@ def get_access_token() -> str:
 def get_latest_vod(access_token: str) -> dict:
     client_id = os.getenv("TWITCH_CLIENT_ID")
 
-    if not client_id:
-        raise RuntimeError(
-            "TWITCH_CLIENT_ID is not configured."
-        )
-
     user_response = requests.get(
         f"{TWITCH_API_URL}/users",
         headers={
@@ -83,8 +78,7 @@ def get_latest_vod(access_token: str) -> dict:
 
     if not users:
         raise RuntimeError(
-            f"Twitch channel '{CHANNEL_NAME}' "
-            "was not found."
+            f"Twitch channel '{CHANNEL_NAME}' was not found."
         )
 
     user_id = users[0]["id"]
@@ -131,27 +125,9 @@ def download_vod(vod: dict) -> Path:
         OUTPUT_DIR / f"{vod_id}.mp4"
     )
 
-    if output_file.exists():
-        print(
-            f"VOD file already exists: "
-            f"{output_file}"
-        )
-
-        return output_file
-
-    temporary_template = (
-        OUTPUT_DIR / f"{vod_id}.%(ext)s"
+    temp_template = (
+        OUTPUT_DIR / f"{vod_id}_source.%(ext)s"
     )
-
-    options = {
-        "format": "bestvideo+bestaudio/best",
-        "outtmpl": str(temporary_template),
-        "merge_output_format": "mp4",
-        "noplaylist": True,
-        "quiet": False,
-        "no_warnings": False,
-        "overwrites": False,
-    }
 
     print(
         f"Selected VOD: {vod_id}"
@@ -171,86 +147,67 @@ def download_vod(vod: dict) -> Path:
         "Downloading complete VOD..."
     )
 
-    print(
-        "This can take a while depending "
-        "on the VOD duration and runner speed."
-    )
+    options = {
+        "format": "best[ext=mp4]/best",
+        "outtmpl": str(temp_template),
+        "noplaylist": True,
+        "quiet": False,
+        "no_warnings": False,
+    }
 
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download([vod_url])
 
-    if output_file.exists():
-        downloaded_file = output_file
-
-    else:
-        possible_files = list(
-            OUTPUT_DIR.glob(
-                f"{vod_id}.*"
-            )
+    source_files = list(
+        OUTPUT_DIR.glob(
+            f"{vod_id}_source.*"
         )
-
-        possible_files = [
-            path
-            for path in possible_files
-            if path.is_file()
-            and path.suffix.lower()
-            not in {
-                ".part",
-                ".ytdl",
-            }
-        ]
-
-        if not possible_files:
-            raise RuntimeError(
-                "yt-dlp did not produce "
-                "a downloaded VOD file."
-            )
-
-        downloaded_file = possible_files[0]
-
-    if downloaded_file.suffix.lower() != ".mp4":
-        print(
-            "Downloaded file is not MP4."
-        )
-
-        print(
-            f"Converting {downloaded_file} "
-            "to MP4..."
-        )
-
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(downloaded_file),
-                "-c",
-                "copy",
-                str(output_file),
-            ],
-            check=True,
-        )
-
-        downloaded_file.unlink(
-            missing_ok=True
-        )
-
-        downloaded_file = output_file
-
-    if not downloaded_file.exists():
-        raise RuntimeError(
-            "Expected VOD file was not created: "
-            f"{downloaded_file}"
-        )
-
-    print()
-
-    print(
-        f"Complete VOD downloaded: "
-        f"{downloaded_file}"
     )
 
-    return downloaded_file
+    if not source_files:
+        raise RuntimeError(
+            "yt-dlp did not produce a downloaded file."
+        )
+
+    source_file = source_files[0]
+
+    print(
+        f"Downloaded source: {source_file}"
+    )
+
+    print(
+        "Converting VOD to MP4..."
+    )
+
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source_file),
+            "-c",
+            "copy",
+            str(output_file),
+        ],
+        check=True,
+    )
+
+    if not output_file.exists():
+        raise RuntimeError(
+            "Expected output file was not created: "
+            f"{output_file}"
+        )
+
+    try:
+        source_file.unlink()
+    except OSError:
+        pass
+
+    print(
+        f"Complete VOD downloaded: {output_file}"
+    )
+
+    return output_file
 
 
 def inspect_video(video_path: Path) -> None:
@@ -295,17 +252,31 @@ def main() -> int:
             vod["id"]
         )
 
+        output_file = (
+            OUTPUT_DIR
+            / f"{vod_id}.mp4"
+        )
+
+        processed = is_vod_processed(
+            vod_id
+        )
+
         print(
             f"Checking whether VOD {vod_id} "
             "has already been processed..."
         )
 
-        if is_vod_processed(vod_id):
+        if processed and output_file.exists():
             print()
 
             print(
-                f"VOD {vod_id} has already "
-                "been processed."
+                f"VOD {vod_id} has already been "
+                "processed."
+            )
+
+            print(
+                f"Complete VOD file already exists: "
+                f"{output_file}"
             )
 
             print(
@@ -314,17 +285,36 @@ def main() -> int:
 
             return 0
 
-        print()
+        if processed and not output_file.exists():
+            print()
 
-        print(
-            f"VOD {vod_id} has NOT been processed."
-        )
+            print(
+                f"VOD {vod_id} is marked as processed, "
+                "but the complete VOD file is missing."
+            )
 
-        print(
-            "Proceeding with complete VOD download..."
-        )
+            print(
+                f"Expected file: {output_file}"
+            )
 
-        print()
+            print(
+                "Re-downloading VOD..."
+            )
+
+            print()
+
+        else:
+            print()
+
+            print(
+                f"VOD {vod_id} has NOT been processed."
+            )
+
+            print(
+                "Proceeding with complete VOD download..."
+            )
+
+            print()
 
         video_path = download_vod(
             vod
@@ -362,8 +352,7 @@ def main() -> int:
 
         if exc.response is not None:
             print(
-                f"Response: "
-                f"{exc.response.text}",
+                f"Response: {exc.response.text}",
                 file=sys.stderr,
             )
 
