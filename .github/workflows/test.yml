@@ -1,4 +1,5 @@
-name: Initial Environment Test
+```yaml
+name: Complete VOD Pipeline Test
 
 on:
   workflow_dispatch:
@@ -7,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  test-environment:
+  complete-vod-pipeline:
     runs-on: ubuntu-latest
 
     steps:
@@ -104,7 +105,7 @@ jobs:
         run: |
           python src/twitch_auth.py
 
-      - name: Test Twitch VOD discovery
+      - name: Discover latest Twitch VOD
         env:
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
@@ -115,48 +116,85 @@ jobs:
         env:
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
-          FORCE_VOD_DOWNLOAD: "true"
+          FORCE_VOD_TEST_DOWNLOAD: "true"
         run: |
           python src/twitch_vod_downloader.py
 
-      - name: Show downloaded VOD
+      - name: Show processed VOD state
         run: |
-          echo "Available complete VOD files:"
+          echo "========================================="
+          echo "Current processed VOD state:"
+          echo "========================================="
 
-          if [ ! -d "data/vods" ]; then
+          if [ -f data/processed_vods.json ]; then
+            cat data/processed_vods.json
+          else
+            echo "No processed VOD state file found."
+          fi
+
+          echo
+          echo "========================================="
+
+      - name: Check complete VOD
+        run: |
+          echo "========================================="
+          echo "Available complete VOD files:"
+          echo "========================================="
+
+          if [ ! -d data/vods ]; then
             echo "ERROR: data/vods directory does not exist."
             exit 1
           fi
 
-          find data/vods \
-            -maxdepth 1 \
-            -type f \
-            -print
+          find data/vods -maxdepth 1 -type f -print
 
-          if ! compgen -G "data/vods/*.mp4" > /dev/null; then
+          VOD_FILE_COUNT=$(find data/vods -maxdepth 1 -type f -name "*.mp4" | wc -l)
+
+          echo
+          echo "MP4 files found: $VOD_FILE_COUNT"
+
+          if [ "$VOD_FILE_COUNT" -eq 0 ]; then
             echo "ERROR: No complete VOD MP4 was downloaded."
             exit 1
           fi
+
+          echo
+          echo "Complete VOD download verified."
+
+      - name: Inspect complete VOD
+        run: |
+          echo "========================================="
+          echo "Complete VOD information:"
+          echo "========================================="
+
+          for file in data/vods/*.mp4; do
+            echo "File: $file"
+
+            ffprobe \
+              -v error \
+              -show_entries format=duration,size \
+              -of default=noprint_wrappers=1 \
+              "$file"
+
+            echo
+          done
 
       - name: Run Whisper transcription
         run: |
           python src/whisper_transcriber.py
 
-      - name: Show transcription
+      - name: Show Whisper transcription
         run: |
           echo "========================================="
           echo "Whisper transcription:"
           echo "========================================="
 
-          find data/transcriptions \
-            -maxdepth 1 \
-            -type f \
-            -name "*.json" \
-            -print
+          if [ ! -f data/transcriptions/2846005700_test.json ]; then
+            echo "ERROR: Whisper transcription output not found."
+            exit 1
+          fi
 
-          echo
-
-          cat data/transcriptions/*.json
+          cat data/transcriptions/2846005700_test.json
 
           echo
           echo "========================================="
@@ -173,15 +211,78 @@ jobs:
           echo "Gemini candidates:"
           echo "========================================="
 
-          find data/analysis \
-            -maxdepth 1 \
-            -type f \
-            -name "*.json" \
-            -print
+          if [ ! -f data/analysis/2846005700_candidates.json ]; then
+            echo "ERROR: Gemini analysis output not found."
+            exit 1
+          fi
+
+          cat data/analysis/2846005700_candidates.json
 
           echo
+          echo "========================================="
 
-          cat data/analysis/*.json
+      - name: Generate clips
+        run: |
+          python src/clip_generator.py
+
+      - name: Show generated clips
+        run: |
+          echo "========================================="
+          echo "Generated clips:"
+          echo "========================================="
+
+          if [ ! -d data/clips ]; then
+            echo "ERROR: data/clips directory does not exist."
+            exit 1
+          fi
+
+          find data/clips -maxdepth 1 -type f -print
+
+          CLIP_COUNT=$(find data/clips -maxdepth 1 -type f -name "*.mp4" | wc -l)
+
+          echo
+          echo "MP4 clips found: $CLIP_COUNT"
+
+          if [ "$CLIP_COUNT" -eq 0 ]; then
+            echo "ERROR: No clips were generated."
+            exit 1
+          fi
+
+          echo
+          echo "Clip generation verified."
+
+      - name: Inspect generated clips
+        run: |
+          echo "========================================="
+          echo "Generated clip information:"
+          echo "========================================="
+
+          for file in data/clips/*.mp4; do
+            echo "-----------------------------------------"
+            echo "File: $file"
+
+            ffprobe \
+              -v error \
+              -show_entries format=duration,size \
+              -of default=noprint_wrappers=1 \
+              "$file"
+          done
+
+          echo
+          echo "========================================="
+
+      - name: Show clips manifest
+        run: |
+          echo "========================================="
+          echo "Clips manifest:"
+          echo "========================================="
+
+          if [ ! -f data/clips/clips_manifest.json ]; then
+            echo "ERROR: Clips manifest was not generated."
+            exit 1
+          fi
+
+          cat data/clips/clips_manifest.json
 
           echo
           echo "========================================="
@@ -189,21 +290,36 @@ jobs:
       - name: Upload Whisper transcription
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-transcription-test
+          name: whisper-transcription-complete-test
           path: data/transcriptions/*.json
           if-no-files-found: error
 
       - name: Upload Gemini analysis
         uses: actions/upload-artifact@v4
         with:
-          name: gemini-analysis-test
+          name: gemini-analysis-complete-test
           path: data/analysis/*.json
           if-no-files-found: error
 
-      - name: Environment test completed
+      - name: Upload generated clips
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-clips-test
+          path: data/clips/*.mp4
+          if-no-files-found: error
+
+      - name: Upload clips manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: clips-manifest-test
+          path: data/clips/clips_manifest.json
+          if-no-files-found: error
+
+      - name: Complete VOD pipeline test completed
         run: |
           echo "========================================="
           echo "Complete VOD pipeline test completed."
+          echo "========================================="
           echo "Python: OK"
           echo "FFmpeg: OK"
           echo "FFprobe: OK"
@@ -215,4 +331,6 @@ jobs:
           echo "Complete VOD download: OK"
           echo "Whisper transcription: OK"
           echo "Gemini analysis: OK"
+          echo "Clip generation: OK"
           echo "========================================="
+```
