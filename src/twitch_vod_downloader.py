@@ -257,6 +257,14 @@ def main() -> int:
             / f"{vod_id}.mp4"
         )
 
+        force_download = (
+            os.getenv(
+                "FORCE_VOD_DOWNLOAD",
+                "",
+            ).lower()
+            == "true"
+        )
+
         processed = is_vod_processed(
             vod_id
         )
@@ -266,54 +274,54 @@ def main() -> int:
             "has already been processed..."
         )
 
-        if processed and output_file.exists():
+        if force_download:
+            print()
+            print(
+                "FORCE_VOD_DOWNLOAD=true"
+            )
+            print(
+                "Forcing complete VOD download."
+            )
             print()
 
+        elif processed and output_file.exists():
+            print()
             print(
                 f"VOD {vod_id} has already been "
                 "processed."
             )
-
             print(
                 f"Complete VOD file already exists: "
                 f"{output_file}"
             )
-
             print(
                 "No download is necessary."
             )
 
             return 0
 
-        if processed and not output_file.exists():
+        elif processed and not output_file.exists():
             print()
-
             print(
                 f"VOD {vod_id} is marked as processed, "
                 "but the complete VOD file is missing."
             )
-
             print(
                 f"Expected file: {output_file}"
             )
-
             print(
                 "Re-downloading VOD..."
             )
-
             print()
 
         else:
             print()
-
             print(
                 f"VOD {vod_id} has NOT been processed."
             )
-
             print(
                 "Proceeding with complete VOD download..."
             )
-
             print()
 
         video_path = download_vod(
