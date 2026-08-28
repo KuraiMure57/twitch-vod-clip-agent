@@ -111,26 +111,26 @@ jobs:
         run: |
           python src/twitch_vods.py
 
-      - name: Test VOD download
+      - name: Download complete VOD
         env:
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
-          FORCE_VOD_TEST_DOWNLOAD: "true"
         run: |
           python src/twitch_vod_downloader.py
 
-      - name: Show VOD state
+      - name: Show downloaded VOD
         run: |
-          echo "Current processed VOD state:"
-          cat data/processed_vods.json
+          echo "Available complete VOD files:"
 
-      - name: Check downloaded VOD test
-        run: |
-          echo "Available VOD test files:"
-          find data/vod_test -maxdepth 1 -type f -print
+          if [ ! -d "data/vods" ]; then
+            echo "ERROR: data/vods directory does not exist."
+            exit 1
+          fi
 
-          if ! compgen -G "data/vod_test/*.mp4" > /dev/null; then
-            echo "ERROR: No VOD test MP4 was downloaded."
+          find data/vods -maxdepth 1 -type f -print
+
+          if ! compgen -G "data/vods/*.mp4" > /dev/null; then
+            echo "ERROR: No complete VOD MP4 was downloaded."
             exit 1
           fi
 
@@ -143,7 +143,17 @@ jobs:
           echo "========================================="
           echo "Whisper transcription:"
           echo "========================================="
-          cat data/transcriptions/2846005700_test.json
+
+          find data/transcriptions \
+            -maxdepth 1 \
+            -type f \
+            -name "*.json" \
+            -print
+
+          echo
+
+          cat data/transcriptions/*.json
+
           echo
           echo "========================================="
 
@@ -158,7 +168,17 @@ jobs:
           echo "========================================="
           echo "Gemini candidates:"
           echo "========================================="
-          cat data/analysis/2846005700_candidates.json
+
+          find data/analysis \
+            -maxdepth 1 \
+            -type f \
+            -name "*.json" \
+            -print
+
+          echo
+
+          cat data/analysis/*.json
+
           echo
           echo "========================================="
 
@@ -176,17 +196,10 @@ jobs:
           path: data/analysis/*.json
           if-no-files-found: error
 
-      - name: Upload downloaded VOD test
-        uses: actions/upload-artifact@v4
-        with:
-          name: twitch-vod-test
-          path: data/vod_test/*.mp4
-          if-no-files-found: error
-
       - name: Environment test completed
         run: |
           echo "========================================="
-          echo "Initial environment test completed."
+          echo "Complete VOD pipeline test completed."
           echo "Python: OK"
           echo "FFmpeg: OK"
           echo "FFprobe: OK"
@@ -195,7 +208,7 @@ jobs:
           echo "Gemini SDK: OK"
           echo "Twitch authentication: OK"
           echo "Twitch VOD discovery: OK"
-          echo "Twitch VOD download: OK"
+          echo "Complete VOD download: OK"
           echo "Whisper transcription: OK"
           echo "Gemini analysis: OK"
           echo "========================================="
