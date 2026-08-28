@@ -5,7 +5,7 @@ from pathlib import Path
 import whisper
 
 
-VOD_DIR = Path(
+INPUT_DIR = Path(
     "data/vods"
 )
 
@@ -15,32 +15,31 @@ OUTPUT_DIR = Path(
 
 MODEL_NAME = "small"
 
-INITIAL_PROMPT = """
-Transcripción en español de un stream de Twitch de videojuegos.
-El hablante puede utilizar lenguaje coloquial, nombres de videojuegos,
-personajes, objetos, enemigos, habilidades, drops, clips, gameplay
-y terminología habitual de videojuegos.
-"""
 
+def find_input_video() -> Path:
+    if not INPUT_DIR.exists():
+        raise FileNotFoundError(
+            f"VOD directory not found: {INPUT_DIR}"
+        )
 
-def find_vod() -> Path:
-    vod_files = sorted(
-        VOD_DIR.glob("*.mp4"),
+    videos = sorted(
+        INPUT_DIR.glob("*.mp4"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
 
-    if not vod_files:
+    if not videos:
         raise FileNotFoundError(
-            f"No MP4 VOD files found in: {VOD_DIR}"
+            f"No MP4 VOD files found in {INPUT_DIR}"
         )
 
-    return vod_files[0]
+    return videos[0]
 
 
 def transcribe_video(
     input_video: Path,
 ) -> Path:
+
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
@@ -49,41 +48,33 @@ def transcribe_video(
     vod_id = input_video.stem
 
     output_file = (
-        OUTPUT_DIR / f"{vod_id}.json"
+        OUTPUT_DIR
+        / f"{vod_id}.json"
     )
 
     print(
-        f"Loading Whisper model: {MODEL_NAME}"
+        f"Loading Whisper model: "
+        f"{MODEL_NAME}"
     )
 
     model = whisper.load_model(
         MODEL_NAME
     )
 
-    print()
     print(
-        f"Transcribing complete VOD:"
+        f"Transcribing: {input_video}"
     )
-
-    print(
-        input_video
-    )
-
-    print()
 
     result = model.transcribe(
         str(input_video),
         language="es",
-        task="transcribe",
         fp16=False,
         verbose=True,
-        temperature=0,
-        condition_on_previous_text=False,
-        initial_prompt=INITIAL_PROMPT,
     )
 
     output = {
         "video": str(input_video),
+        "vod_id": vod_id,
         "model": MODEL_NAME,
         "language": result.get(
             "language",
@@ -111,6 +102,7 @@ def transcribe_video(
         )
 
     print()
+
     print(
         "Whisper transcription completed."
     )
@@ -129,24 +121,22 @@ def transcribe_video(
         f"{len(output['segments'])}"
     )
 
+    print()
+
     print(
-        f"Characters: "
-        f"{len(output['text'])}"
+        "Transcription:"
     )
 
-    print()
+    print(
+        output["text"]
+    )
 
     return output_file
 
 
 def main() -> int:
     try:
-        input_video = find_vod()
-
-        print(
-            f"Selected VOD for transcription: "
-            f"{input_video}"
-        )
+        input_video = find_input_video()
 
         transcribe_video(
             input_video
