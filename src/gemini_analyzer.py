@@ -6,117 +6,79 @@ from pathlib import Path
 from google import genai
 
 
-INPUT_FILE = Path(
-    "data/transcriptions/2846005700_test.json"
+INPUT_DIR = Path(
+    "data/transcriptions"
 )
 
 OUTPUT_DIR = Path(
     "data/analysis"
 )
 
-OUTPUT_FILE = (
-    OUTPUT_DIR / "2846005700_candidates.json"
-)
-
 MODEL_NAME = "gemini-3.6-flash"
 
 
 ANALYSIS_PROMPT = """
-Eres un analista especializado en contenido para Twitch y clips cortos.
+Eres un analista especializado en contenido para Twitch
+y clips cortos para TikTok.
 
-Vas a recibir la transcripción de un stream de Twitch realizada
-automáticamente mediante Whisper.
+Vas a recibir la transcripción completa de un stream de Twitch.
 
-Tu objetivo es identificar ÚNICAMENTE momentos que tengan un potencial
-real para convertirse en clips de Twitch y posteriormente en vídeos
-cortos para TikTok.
-
-IMPORTANTE:
-La transcripción puede contener errores de reconocimiento de voz.
-Puede haber palabras inventadas, frases incoherentes, idiomas mezclados,
-repeticiones o fragmentos mal interpretados.
-
-NO debes interpretar una transcripción incoherente como si describiera
-un acontecimiento real.
+Tu trabajo es identificar los momentos que realmente tienen
+potencial para convertirse en clips.
 
 Busca especialmente:
 
+- momentos graciosos;
 - sustos;
 - reacciones fuertes;
-- gritos o exclamaciones claramente relevantes;
-- momentos graciosos;
-- fails;
-- errores del jugador;
-- situaciones inesperadas;
+- momentos inesperados;
+- errores o fails;
 - situaciones tensas;
 - comentarios espontáneos interesantes;
-- descubrimientos o sorpresas;
+- sorpresas;
+- situaciones absurdas;
 - interacciones entretenidas;
-- momentos con una reacción emocional clara;
-- momentos que tengan contexto suficiente para funcionar como clip.
+- momentos con potencial viral;
+- momentos que tengan contexto suficiente para entenderse
+  como clip independiente.
 
-REGLAS IMPORTANTES:
+NO inventes acontecimientos.
 
-1. NO inventes acontecimientos que no aparecen en la transcripción.
+La transcripción puede contener errores de reconocimiento de voz.
+Tenlo en cuenta antes de decidir que una frase es graciosa.
 
-2. NO asumas que una frase incoherente describe algo que ocurrió en el
-   juego.
+No consideres interesante una frase únicamente porque la
+transcripción parezca absurda.
 
-3. Si una parte de la transcripción parece claramente un error de
-   Whisper, ignórala como evidencia de un momento interesante.
-
-4. Una frase aislada o una exclamación genérica NO es suficiente para
-   crear un candidato.
-
-5. Una frase como "muy bien", "qué le vamos a hacer", "hostia",
-   "madre mía", etc. no debe convertirse automáticamente en un clip.
-   Necesita contexto y una reacción significativa.
-
-6. Las repeticiones causadas probablemente por Whisper no deben
-   considerarse múltiples momentos.
-
-7. Si no puedes determinar razonablemente por qué el momento sería
-   entretenido basándote en el texto disponible, NO lo selecciones.
-
-8. Es preferible devolver cero candidatos antes que devolver un
-   candidato mediocre.
-
-9. No devuelvas demasiados candidatos. Selecciona únicamente los
-   momentos con potencial real.
-
-10. Cada candidato debe tener un principio y un final razonables.
-
-11. El clip debería poder entenderse por sí mismo siempre que sea
-    posible.
-
-12. La puntuación debe reflejar el potencial REAL del momento:
-
-    - 90-100: momento excepcional, muy buen candidato.
-    - 80-89: momento claramente bueno.
-    - 70-79: momento interesante y potencialmente válido.
-    - 60-69: dudoso, normalmente NO debería seleccionarse.
-    - menos de 60: NO seleccionar.
-
-13. La confianza representa cuánto confías en que el momento realmente
-    corresponde a algo interesante y no a un error de transcripción.
-
-14. Si la transcripción disponible es demasiado mala para identificar
-    momentos con confianza, devuelve una lista vacía.
-
-15. No utilices el título del clip para inventar contexto que no aparece
-    en la transcripción.
-
-16. Los timestamps deben proceder de los segmentos proporcionados.
+Utiliza los timestamps de los segmentos.
 
 Para cada candidato devuelve:
 
 - start: segundo aproximado de inicio;
 - end: segundo aproximado de final;
 - score: puntuación de 0 a 100;
-- category: categoría del momento;
-- reason: explicación breve basada exclusivamente en la transcripción;
+- category: categoría;
+- reason: explicación breve;
 - title: título corto y atractivo;
 - confidence: confianza de 0 a 1.
+
+Reglas importantes:
+
+1. No devuelvas conversación normal.
+2. No devuelvas introducciones normales.
+3. No devuelvas explicaciones rutinarias del juego.
+4. No devuelvas simplemente información sobre drops.
+5. No confundas errores de Whisper con momentos graciosos.
+6. No inventes contexto visual que no aparece en la información.
+7. Es mejor devolver pocos candidatos buenos que muchos malos.
+8. Un candidato debe tener un principio y un final razonables.
+9. El clip debe poder entenderse razonablemente por sí mismo.
+10. Prioriza momentos con reacción, sorpresa, tensión,
+    humor o algo claramente interesante.
+11. Si no existe ningún momento suficientemente bueno,
+    devuelve una lista vacía.
+12. No fuerces candidatos para llenar una cantidad determinada.
+13. Solo considera candidatos con potencial real de clip.
 
 Devuelve ÚNICAMENTE JSON válido con esta estructura:
 
@@ -126,29 +88,43 @@ Devuelve ÚNICAMENTE JSON válido con esta estructura:
       "start": 0,
       "end": 30,
       "score": 85,
-      "category": "reacción",
-      "reason": "Descripción breve basada en la transcripción.",
+      "category": "susto",
+      "reason": "Descripción breve.",
       "title": "Título del clip",
-      "confidence": 0.90
+      "confidence": 0.92
     }
   ]
-}
-
-Si no encuentras ningún momento suficientemente bueno:
-
-{
-  "candidates": []
 }
 """
 
 
-def load_transcription() -> dict:
-    if not INPUT_FILE.exists():
+def find_transcription() -> Path:
+    if not INPUT_DIR.exists():
         raise FileNotFoundError(
-            f"Transcription file not found: {INPUT_FILE}"
+            f"Transcription directory not found: "
+            f"{INPUT_DIR}"
         )
 
-    with INPUT_FILE.open(
+    files = sorted(
+        INPUT_DIR.glob("*.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+    if not files:
+        raise FileNotFoundError(
+            f"No transcription JSON files found "
+            f"in {INPUT_DIR}"
+        )
+
+    return files[0]
+
+
+def load_transcription(
+    input_file: Path,
+) -> dict:
+
+    with input_file.open(
         "r",
         encoding="utf-8",
     ) as file:
@@ -158,6 +134,7 @@ def load_transcription() -> dict:
 def build_transcription_text(
     transcription: dict,
 ) -> str:
+
     segments = transcription.get(
         "segments",
         [],
@@ -167,15 +144,24 @@ def build_transcription_text(
 
     for segment in segments:
         start = float(
-            segment.get("start", 0)
+            segment.get(
+                "start",
+                0,
+            )
         )
 
         end = float(
-            segment.get("end", 0)
+            segment.get(
+                "end",
+                0,
+            )
         )
 
         text = str(
-            segment.get("text", "")
+            segment.get(
+                "text",
+                "",
+            )
         ).strip()
 
         if not text:
@@ -189,6 +175,7 @@ def build_transcription_text(
 
 
 def get_gemini_client() -> genai.Client:
+
     api_key = os.getenv(
         "GEMINI_API_KEY"
     )
@@ -206,6 +193,7 @@ def get_gemini_client() -> genai.Client:
 def analyze_transcription(
     transcription_text: str,
 ) -> dict:
+
     client = get_gemini_client()
 
     prompt = (
@@ -236,11 +224,13 @@ def analyze_transcription(
         result = json.loads(
             response.text
         )
+
     except json.JSONDecodeError as exc:
         print(
             "Gemini raw response:",
             file=sys.stderr,
         )
+
         print(
             response.text,
             file=sys.stderr,
@@ -270,12 +260,14 @@ def analyze_transcription(
 def validate_candidates(
     result: dict,
 ) -> None:
+
     candidates = result["candidates"]
 
     for index, candidate in enumerate(
         candidates,
         start=1,
     ):
+
         required_fields = [
             "start",
             "end",
@@ -311,7 +303,8 @@ def validate_candidates(
 
         if start < 0:
             raise RuntimeError(
-                f"Candidate #{index} has a negative start."
+                f"Candidate #{index} has "
+                "a negative start."
             )
 
         if end <= start:
@@ -333,13 +326,17 @@ def validate_candidates(
             )
 
 
-def save_result(result: dict) -> None:
+def save_result(
+    result: dict,
+    output_file: Path,
+) -> None:
+
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    with OUTPUT_FILE.open(
+    with output_file.open(
         "w",
         encoding="utf-8",
     ) as file:
@@ -353,7 +350,11 @@ def save_result(result: dict) -> None:
 
 def main() -> int:
     try:
-        transcription = load_transcription()
+        input_file = find_transcription()
+
+        transcription = load_transcription(
+            input_file
+        )
 
         transcription_text = (
             build_transcription_text(
@@ -365,6 +366,21 @@ def main() -> int:
             raise RuntimeError(
                 "The transcription contains no text."
             )
+
+        vod_id = transcription.get(
+            "vod_id",
+            input_file.stem,
+        )
+
+        output_file = (
+            OUTPUT_DIR
+            / f"{vod_id}_candidates.json"
+        )
+
+        print(
+            f"Transcription file: "
+            f"{input_file}"
+        )
 
         print(
             f"Transcription segments: "
@@ -385,7 +401,8 @@ def main() -> int:
         )
 
         save_result(
-            result
+            result,
+            output_file,
         )
 
         candidates = result[
@@ -393,6 +410,7 @@ def main() -> int:
         ]
 
         print()
+
         print(
             "Gemini analysis completed."
         )
@@ -403,7 +421,7 @@ def main() -> int:
         )
 
         print(
-            f"Output: {OUTPUT_FILE}"
+            f"Output: {output_file}"
         )
 
         print()
@@ -412,6 +430,7 @@ def main() -> int:
             candidates,
             start=1,
         ):
+
             print(
                 f"Candidate #{index}"
             )
