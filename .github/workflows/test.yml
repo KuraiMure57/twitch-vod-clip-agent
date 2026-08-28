@@ -1,4 +1,3 @@
-```yaml
 name: Complete VOD Pipeline Test
 
 on:
@@ -333,4 +332,3 @@ jobs:
           echo "Gemini analysis: OK"
           echo "Clip generation: OK"
           echo "========================================="
-```
