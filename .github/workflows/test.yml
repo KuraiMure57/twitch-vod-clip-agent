@@ -115,6 +115,7 @@ jobs:
         env:
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          FORCE_VOD_DOWNLOAD: "true"
         run: |
           python src/twitch_vod_downloader.py
 
@@ -127,7 +128,10 @@ jobs:
             exit 1
           fi
 
-          find data/vods -maxdepth 1 -type f -print
+          find data/vods \
+            -maxdepth 1 \
+            -type f \
+            -print
 
           if ! compgen -G "data/vods/*.mp4" > /dev/null; then
             echo "ERROR: No complete VOD MP4 was downloaded."
