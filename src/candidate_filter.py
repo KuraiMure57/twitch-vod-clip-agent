@@ -33,6 +33,12 @@ def find_analysis_file() -> Path:
             f"{INPUT_DIR}"
         )
 
+    if len(files) > 1:
+        raise RuntimeError(
+            "Multiple Gemini candidates files found in "
+            f"{INPUT_DIR}. Expected exactly one analysis file."
+        )
+
     return files[0]
 
 
@@ -68,10 +74,21 @@ def validate_candidate(
             )
 
     try:
-        start = float(candidate["start"])
-        end = float(candidate["end"])
-        score = float(candidate["score"])
-        confidence = float(candidate["confidence"])
+        start = float(
+            candidate["start"]
+        )
+
+        end = float(
+            candidate["end"]
+        )
+
+        score = float(
+            candidate["score"]
+        )
+
+        confidence = float(
+            candidate["confidence"]
+        )
 
     except (
         TypeError,
@@ -109,6 +126,7 @@ def validate_candidate(
 def filter_candidates(
     candidates: list[dict],
 ) -> tuple[list[dict], dict]:
+
     selected = []
 
     rejected_score = 0
@@ -204,6 +222,7 @@ def save_result(
     statistics: dict,
     output_file: Path,
 ) -> None:
+
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
@@ -258,6 +277,15 @@ def main() -> int:
         )
 
         print(
+            f"VOD ID: {vod_id}"
+        )
+
+        print(
+            f"Analysis file: "
+            f"{input_file}"
+        )
+
+        print(
             f"Gemini candidates received: "
             f"{len(candidates)}"
         )
@@ -285,23 +313,27 @@ def main() -> int:
         print(
             "Candidate filtering completed."
         )
+
         print(
             f"Total candidates: "
             f"{statistics['total_candidates']}"
         )
+
         print(
             f"Selected candidates: "
             f"{statistics['selected_candidates']}"
         )
+
         print(
             f"Rejected by score: "
             f"{statistics['rejected_by_score']}"
         )
+
         print(
             f"Rejected by duration: "
             f"{statistics['rejected_by_duration']}"
         )
-        print()
+
         print(
             f"Output: {output_file}"
         )
@@ -314,26 +346,32 @@ def main() -> int:
             print(
                 f"Selected candidate #{index}"
             )
+
             print(
                 f"  Start: "
                 f"{candidate['start']}"
             )
+
             print(
                 f"  End: "
                 f"{candidate['end']}"
             )
+
             print(
                 f"  Duration: "
                 f"{candidate['duration']}s"
             )
+
             print(
                 f"  Score: "
                 f"{candidate['score']}"
             )
+
             print(
                 f"  Category: "
                 f"{candidate['category']}"
             )
+
             print(
                 f"  Title: "
                 f"{candidate['title']}"
@@ -346,6 +384,7 @@ def main() -> int:
             f"ERROR: {exc}",
             file=sys.stderr,
         )
+
         return 1
 
 
