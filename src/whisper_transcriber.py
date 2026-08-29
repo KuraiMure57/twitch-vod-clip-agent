@@ -32,9 +32,9 @@ def find_vod() -> Path:
         )
 
     if len(vod_files) > 1:
-        print(
-            f"Multiple VOD files found: "
-            f"{len(vod_files)}"
+        raise RuntimeError(
+            "Multiple VOD files found in "
+            f"{INPUT_DIR}. Expected exactly one VOD."
         )
 
     return vod_files[0]
@@ -52,6 +52,10 @@ def transcribe_video(
 
     output_file = (
         OUTPUT_DIR / f"{vod_id}.json"
+    )
+
+    print(
+        f"VOD ID: {vod_id}"
     )
 
     print(
