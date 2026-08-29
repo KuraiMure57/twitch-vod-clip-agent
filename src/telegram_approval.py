@@ -1,7 +1,6 @@
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 import requests
@@ -10,12 +9,9 @@ import requests
 TELEGRAM_API_URL = "https://api.telegram.org"
 
 MANIFEST_DIR = Path("data/clips")
-
 APPROVED_DIR = Path("data/telegram_approved")
 
-
-POLL_INTERVAL_SECONDS = 3
-POLL_TIMEOUT_SECONDS = 300
+TELEGRAM_LONG_POLL_SECONDS = 30
 
 
 def get_config() -> tuple[str, str]:
@@ -368,13 +364,13 @@ def poll_for_approvals(
     )
 
     print(
-        f"Polling timeout: "
-        f"{POLL_TIMEOUT_SECONDS}s"
+        "No approval timeout is configured."
     )
 
-    started_at = time.time()
-
-    update_id = None
+    print(
+        "The workflow will continue only "
+        "after every clip is reviewed."
+    )
 
     pending = {
         int(item["index"]): item
@@ -384,12 +380,11 @@ def poll_for_approvals(
     approved = []
     rejected = []
 
-    while (
-        time.time() - started_at
-        < POLL_TIMEOUT_SECONDS
-    ):
+    update_id = None
+
+    while pending:
         params = {
-            "timeout": 10,
+            "timeout": TELEGRAM_LONG_POLL_SECONDS,
             "allowed_updates": json.dumps(
                 ["callback_query"]
             ),
@@ -403,10 +398,15 @@ def poll_for_approvals(
             f"{bot_token}/getUpdates"
         )
 
+        print(
+            f"Waiting for Telegram updates... "
+            f"Pending clips: {len(pending)}"
+        )
+
         response = requests.get(
             url,
             params=params,
-            timeout=20,
+            timeout=TELEGRAM_LONG_POLL_SECONDS + 10,
         )
 
         response.raise_for_status()
@@ -448,13 +448,13 @@ def poll_for_approvals(
 
             callback_chat = callback_message.get(
                 "chat",
-                {}
+                {},
             )
 
             callback_chat_id = str(
                 callback_chat.get(
                     "id",
-                    ""
+                    "",
                 )
             )
 
@@ -480,11 +480,9 @@ def poll_for_approvals(
             except ValueError:
                 continue
 
-            if (
-                action not in (
-                    "approve",
-                    "reject",
-                )
+            if action not in (
+                "approve",
+                "reject",
             ):
                 continue
 
@@ -503,7 +501,10 @@ def poll_for_approvals(
 
             if action == "approve":
                 item["status"] = "approved"
-                approved.append(item)
+
+                approved.append(
+                    item
+                )
 
                 answer_callback(
                     bot_token,
@@ -528,7 +529,10 @@ def poll_for_approvals(
 
             else:
                 item["status"] = "rejected"
-                rejected.append(item)
+
+                rejected.append(
+                    item
+                )
 
                 answer_callback(
                     bot_token,
@@ -549,12 +553,21 @@ def poll_for_approvals(
                     "REJECTED"
                 )
 
+            state["approved"] = approved
+            state["rejected"] = rejected
+            state["pending"] = list(
+                pending.values()
+            )
+
+            save_pending_state(
+                state
+            )
+
         if not pending:
             print()
             print(
                 "All clips have been reviewed."
             )
-            break
 
     state["approved"] = approved
     state["rejected"] = rejected
