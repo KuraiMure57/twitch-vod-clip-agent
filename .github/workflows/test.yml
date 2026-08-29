@@ -60,21 +60,13 @@ jobs:
 
       - name: Test FFmpeg
         run: |
-          if command -v ffmpeg >/dev/null 2>&1; then
-            echo "FFmpeg is installed correctly."
-          else
-            echo "FFmpeg is NOT installed."
-            exit 1
-          fi
+          command -v ffmpeg >/dev/null 2>&1 || exit 1
+          echo "FFmpeg is installed correctly."
 
       - name: Test FFprobe
         run: |
-          if command -v ffprobe >/dev/null 2>&1; then
-            echo "FFprobe is installed correctly."
-          else
-            echo "FFprobe is NOT installed."
-            exit 1
-          fi
+          command -v ffprobe >/dev/null 2>&1 || exit 1
+          echo "FFprobe is installed correctly."
 
       - name: Test Whisper
         run: |
@@ -162,20 +154,16 @@ jobs:
 
       - name: Inspect complete VOD
         run: |
-          echo "========================================="
-          echo "Complete VOD information:"
-          echo "========================================="
-
           for file in data/vods/*.mp4; do
-            echo "File: $file"
+            echo "========================================="
+            echo "VOD: $file"
+            echo "========================================="
 
             ffprobe \
               -v error \
               -show_entries format=duration,size \
               -of default=noprint_wrappers=1 \
               "$file"
-
-            echo
           done
 
       - name: Run Whisper transcription
@@ -188,12 +176,18 @@ jobs:
           echo "Whisper transcription:"
           echo "========================================="
 
-          if [ ! -f data/transcriptions/2846005700_test.json ]; then
+          find data/transcriptions -maxdepth 1 -type f -name "*.json" -print
+
+          TRANSCRIPTION_COUNT=$(find data/transcriptions -maxdepth 1 -type f -name "*.json" | wc -l)
+
+          if [ "$TRANSCRIPTION_COUNT" -eq 0 ]; then
             echo "ERROR: Whisper transcription output not found."
             exit 1
           fi
 
-          cat data/transcriptions/2846005700_test.json
+          for file in data/transcriptions/*.json; do
+            cat "$file"
+          done
 
           echo
           echo "========================================="
@@ -210,12 +204,48 @@ jobs:
           echo "Gemini candidates:"
           echo "========================================="
 
-          if [ ! -f data/analysis/2846005700_candidates.json ]; then
+          find data/analysis -maxdepth 1 -type f -name "*_candidates.json" -print
+
+          ANALYSIS_COUNT=$(find data/analysis -maxdepth 1 -type f -name "*_candidates.json" | wc -l)
+
+          if [ "$ANALYSIS_COUNT" -eq 0 ]; then
             echo "ERROR: Gemini analysis output not found."
             exit 1
           fi
 
-          cat data/analysis/2846005700_candidates.json
+          for file in data/analysis/*_candidates.json; do
+            cat "$file"
+          done
+
+          echo
+          echo "========================================="
+
+      - name: Filter candidates
+        run: |
+          python src/candidate_filter.py
+
+      - name: Show filtered candidates
+        run: |
+          echo "========================================="
+          echo "Filtered candidates:"
+          echo "========================================="
+
+          find data/filtered_candidates \
+            -maxdepth 1 \
+            -type f \
+            -name "*_selected.json" \
+            -print
+
+          FILTERED_COUNT=$(find data/filtered_candidates -maxdepth 1 -type f -name "*_selected.json" | wc -l)
+
+          if [ "$FILTERED_COUNT" -eq 0 ]; then
+            echo "ERROR: Filtered candidates output not found."
+            exit 1
+          fi
+
+          for file in data/filtered_candidates/*_selected.json; do
+            cat "$file"
+          done
 
           echo
           echo "========================================="
@@ -235,9 +265,9 @@ jobs:
             exit 1
           fi
 
-          find data/clips -maxdepth 1 -type f -print
+          find data/clips -type f -print
 
-          CLIP_COUNT=$(find data/clips -maxdepth 1 -type f -name "*.mp4" | wc -l)
+          CLIP_COUNT=$(find data/clips -type f -name "*.mp4" | wc -l)
 
           echo
           echo "MP4 clips found: $CLIP_COUNT"
@@ -252,23 +282,19 @@ jobs:
 
       - name: Inspect generated clips
         run: |
-          echo "========================================="
-          echo "Generated clip information:"
-          echo "========================================="
+          for file in data/clips/**/*.mp4 data/clips/*.mp4; do
+            if [ -f "$file" ]; then
+              echo "========================================="
+              echo "Clip: $file"
+              echo "========================================="
 
-          for file in data/clips/*.mp4; do
-            echo "-----------------------------------------"
-            echo "File: $file"
-
-            ffprobe \
-              -v error \
-              -show_entries format=duration,size \
-              -of default=noprint_wrappers=1 \
-              "$file"
+              ffprobe \
+                -v error \
+                -show_entries format=duration,size \
+                -of default=noprint_wrappers=1 \
+                "$file"
+            fi
           done
-
-          echo
-          echo "========================================="
 
       - name: Show clips manifest
         run: |
@@ -276,12 +302,23 @@ jobs:
           echo "Clips manifest:"
           echo "========================================="
 
-          if [ ! -f data/clips/clips_manifest.json ]; then
+          find data/clips \
+            -type f \
+            -name "clips_manifest.json" \
+            -print
+
+          MANIFEST_COUNT=$(find data/clips -type f -name "clips_manifest.json" | wc -l)
+
+          if [ "$MANIFEST_COUNT" -eq 0 ]; then
             echo "ERROR: Clips manifest was not generated."
             exit 1
           fi
 
-          cat data/clips/clips_manifest.json
+          for file in data/clips/*/clips_manifest.json; do
+            if [ -f "$file" ]; then
+              cat "$file"
+            fi
+          done
 
           echo
           echo "========================================="
@@ -300,18 +337,25 @@ jobs:
           path: data/analysis/*.json
           if-no-files-found: error
 
+      - name: Upload filtered candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: filtered-candidates-test
+          path: data/filtered_candidates/*.json
+          if-no-files-found: error
+
       - name: Upload generated clips
         uses: actions/upload-artifact@v4
         with:
           name: generated-clips-test
-          path: data/clips/*.mp4
+          path: data/clips/**/*.mp4
           if-no-files-found: error
 
       - name: Upload clips manifest
         uses: actions/upload-artifact@v4
         with:
           name: clips-manifest-test
-          path: data/clips/clips_manifest.json
+          path: data/clips/**/clips_manifest.json
           if-no-files-found: error
 
       - name: Complete VOD pipeline test completed
@@ -330,5 +374,6 @@ jobs:
           echo "Complete VOD download: OK"
           echo "Whisper transcription: OK"
           echo "Gemini analysis: OK"
+          echo "Candidate filtering: OK"
           echo "Clip generation: OK"
           echo "========================================="
