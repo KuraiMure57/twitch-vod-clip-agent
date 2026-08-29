@@ -1,16 +1,15 @@
-```python
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 
-INPUT_CANDIDATES_FILE = Path(
-    "data/analysis/2846005700_candidates.json"
+VOD_DIR = Path(
+    "data/vods"
 )
 
-INPUT_VOD_FILE = Path(
-    "data/vods/2846005700.mp4"
+CANDIDATES_DIR = Path(
+    "data/filtered_candidates"
 )
 
 OUTPUT_DIR = Path(
@@ -18,14 +17,48 @@ OUTPUT_DIR = Path(
 )
 
 
-def load_candidates() -> list[dict]:
-    if not INPUT_CANDIDATES_FILE.exists():
+def find_vod() -> Path:
+    if not VOD_DIR.exists():
         raise FileNotFoundError(
-            "Gemini candidates file not found: "
-            f"{INPUT_CANDIDATES_FILE}"
+            f"VOD directory not found: {VOD_DIR}"
         )
 
-    with INPUT_CANDIDATES_FILE.open(
+    files = sorted(
+        VOD_DIR.glob("*.mp4")
+    )
+
+    if not files:
+        raise FileNotFoundError(
+            f"No VOD MP4 found in {VOD_DIR}"
+        )
+
+    return files[0]
+
+
+def find_candidates_file() -> Path:
+    if not CANDIDATES_DIR.exists():
+        raise FileNotFoundError(
+            "Filtered candidates directory not found: "
+            f"{CANDIDATES_DIR}"
+        )
+
+    files = sorted(
+        CANDIDATES_DIR.glob("*_selected.json")
+    )
+
+    if not files:
+        raise FileNotFoundError(
+            "No filtered candidates file found in "
+            f"{CANDIDATES_DIR}"
+        )
+
+    return files[0]
+
+
+def load_candidates(
+    input_file: Path,
+) -> list[dict]:
+    with input_file.open(
         "r",
         encoding="utf-8",
     ) as file:
@@ -41,7 +74,7 @@ def load_candidates() -> list[dict]:
         list,
     ):
         raise RuntimeError(
-            "Gemini 'candidates' must be a list."
+            "Filtered 'candidates' must be a list."
         )
 
     return candidates
@@ -68,19 +101,13 @@ def validate_candidate(
                 f"field '{field}'."
             )
 
-    try:
-        start = float(candidate["start"])
-        end = float(candidate["end"])
-        score = float(candidate["score"])
-        confidence = float(candidate["confidence"])
-    except (
-        TypeError,
-        ValueError,
-    ) as exc:
-        raise RuntimeError(
-            f"Candidate #{index} contains invalid "
-            "numeric values."
-        ) from exc
+    start = float(
+        candidate["start"]
+    )
+
+    end = float(
+        candidate["end"]
+    )
 
     if start < 0:
         raise RuntimeError(
@@ -91,18 +118,6 @@ def validate_candidate(
         raise RuntimeError(
             f"Candidate #{index} has invalid timestamps: "
             f"{start} -> {end}."
-        )
-
-    if not 0 <= score <= 100:
-        raise RuntimeError(
-            f"Candidate #{index} has invalid score: "
-            f"{score}."
-        )
-
-    if not 0 <= confidence <= 1:
-        raise RuntimeError(
-            f"Candidate #{index} has invalid confidence: "
-            f"{confidence}."
         )
 
 
@@ -134,9 +149,16 @@ def sanitize_filename(
 def generate_clip(
     candidate: dict,
     index: int,
+    vod_file: Path,
+    output_dir: Path,
 ) -> Path:
-    start = float(candidate["start"])
-    end = float(candidate["end"])
+    start = float(
+        candidate["start"]
+    )
+
+    end = float(
+        candidate["end"]
+    )
 
     duration = end - start
 
@@ -149,7 +171,7 @@ def generate_clip(
     )
 
     output_file = (
-        OUTPUT_DIR
+        output_dir
         / (
             f"clip_{index:02d}"
             f"_{start:.2f}_{end:.2f}"
@@ -190,7 +212,7 @@ def generate_clip(
             "-ss",
             str(start),
             "-i",
-            str(INPUT_VOD_FILE),
+            str(vod_file),
             "-t",
             str(duration),
             "-map",
@@ -235,13 +257,35 @@ def main() -> int:
             "========================================="
         )
 
-        if not INPUT_VOD_FILE.exists():
-            raise FileNotFoundError(
-                "Complete VOD file not found: "
-                f"{INPUT_VOD_FILE}"
-            )
+        vod_file = find_vod()
 
-        candidates = load_candidates()
+        candidates_file = (
+            find_candidates_file()
+        )
+
+        candidates = load_candidates(
+            candidates_file
+        )
+
+        vod_id = vod_file.stem
+
+        output_dir = (
+            OUTPUT_DIR / vod_id
+        )
+
+        output_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        print(
+            f"VOD: {vod_file}"
+        )
+
+        print(
+            f"Candidates: "
+            f"{candidates_file}"
+        )
 
         print(
             f"Candidates received: "
@@ -249,18 +293,14 @@ def main() -> int:
         )
 
         if not candidates:
+            print()
             print(
-                "No candidates were found."
+                "No selected candidates."
             )
             print(
                 "No clips will be generated."
             )
             return 0
-
-        OUTPUT_DIR.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
 
         generated_clips = []
 
@@ -276,6 +316,8 @@ def main() -> int:
             output_file = generate_clip(
                 candidate,
                 index,
+                vod_file,
+                output_dir,
             )
 
             generated_clips.append(
@@ -312,7 +354,8 @@ def main() -> int:
             )
 
         manifest_file = (
-            OUTPUT_DIR / "clips_manifest.json"
+            output_dir
+            / "clips_manifest.json"
         )
 
         with manifest_file.open(
@@ -321,9 +364,8 @@ def main() -> int:
         ) as file:
             json.dump(
                 {
-                    "vod": str(
-                        INPUT_VOD_FILE
-                    ),
+                    "vod_id": vod_id,
+                    "vod": str(vod_file),
                     "clips": generated_clips,
                 },
                 file,
@@ -344,7 +386,7 @@ def main() -> int:
         )
         print(
             f"Output directory: "
-            f"{OUTPUT_DIR}"
+            f"{output_dir}"
         )
         print(
             f"Manifest: "
@@ -353,28 +395,6 @@ def main() -> int:
         print(
             "========================================="
         )
-
-        for clip in generated_clips:
-            print()
-            print(
-                f"Clip #{clip['index']}"
-            )
-            print(
-                f"  File: "
-                f"{clip['file']}"
-            )
-            print(
-                f"  Duration: "
-                f"{clip['duration']}s"
-            )
-            print(
-                f"  Score: "
-                f"{clip['score']}"
-            )
-            print(
-                f"  Title: "
-                f"{clip['title']}"
-            )
 
         return 0
 
@@ -401,4 +421,3 @@ if __name__ == "__main__":
     raise SystemExit(
         main()
     )
-```
