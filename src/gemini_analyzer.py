@@ -1,20 +1,33 @@
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from google import genai
 
 
-INPUT_DIR = Path(
-    "data/transcriptions"
+INPUT_FILE = Path(
+    "data/transcriptions/2846005700.json"
 )
 
 OUTPUT_DIR = Path(
     "data/analysis"
 )
 
+OUTPUT_FILE = (
+    OUTPUT_DIR / "2846005700_candidates.json"
+)
+
 MODEL_NAME = "gemini-3.6-flash"
+
+MAX_RETRIES = 3
+
+RETRY_DELAYS = [
+    10,
+    30,
+    60,
+]
 
 
 ANALYSIS_PROMPT = """
@@ -22,103 +35,149 @@ Eres un analista especializado en contenido para Twitch y clips cortos.
 
 Vas a recibir la transcripción COMPLETA de un stream de Twitch.
 
-Tu trabajo es identificar momentos que podrían funcionar bien como clips
-de Twitch y posteriormente como contenido corto para TikTok.
+Tu trabajo es identificar únicamente los momentos que tengan potencial real
+para convertirse en clips de Twitch y posteriormente en vídeos cortos para
+TikTok.
+
+La transcripción contiene timestamps reales de los segmentos de Whisper.
 
 Busca especialmente:
 
+- sustos;
+- reacciones fuertes;
 - momentos graciosos;
-- sustos o reacciones fuertes;
 - momentos inesperados;
-- errores o fails;
+- fails;
+- errores;
 - situaciones tensas;
+- persecuciones;
+- muertes;
+- victorias;
+- descubrimientos;
 - comentarios espontáneos interesantes;
-- momentos de sorpresa;
-- interacciones que tengan potencial para entretener;
-- momentos con suficiente contexto para entenderse como clip.
+- frases especialmente graciosas;
+- interacciones entretenidas;
+- situaciones que puedan generar curiosidad;
+- momentos con una reacción clara del streamer;
+- momentos que tengan contexto suficiente para funcionar como clip.
 
-NO inventes acontecimientos que no aparecen en la transcripción.
+IMPORTANTE:
 
-Utiliza los timestamps de los segmentos para localizar cada momento.
+La transcripción puede contener errores de reconocimiento de voz.
 
-Para cada candidato devuelve:
+No debes interpretar literalmente palabras claramente deformadas por Whisper
+si el contexto de los segmentos cercanos permite entender lo que realmente
+está ocurriendo.
+
+Sin embargo:
+
+NO inventes acontecimientos.
+
+NO supongas que ha ocurrido un susto, una muerte, una persecución, una
+victoria o cualquier otro acontecimiento si la transcripción no proporciona
+evidencia suficiente.
+
+Utiliza siempre los timestamps de los segmentos proporcionados.
+
+El candidato debe cubrir el momento interesante completo.
+
+Cuando sea posible, incluye unos segundos de contexto antes del momento
+principal y unos segundos después para que el clip tenga sentido.
+
+Duración recomendada:
+
+- mínimo aproximado: 15 segundos;
+- máximo aproximado: 90 segundos.
+
+No es necesario utilizar exactamente esos límites si hacerlo perjudica
+claramente el contexto del momento.
+
+Prioridad:
+
+1. Momentos claramente entretenidos.
+2. Momentos con una reacción fuerte.
+3. Momentos inesperados.
+4. Momentos tensos o de suspense.
+5. Momentos graciosos.
+6. Momentos con potencial para TikTok.
+
+NO devuelvas:
+
+- saludos;
+- introducciones normales;
+- explicaciones rutinarias;
+- conversaciones normales;
+- comentarios sin interés;
+- información sobre drops salvo que exista un momento realmente entretenido
+  asociado a ellos;
+- fragmentos cuyo único interés sea que el streamer está hablando.
+
+Es mejor devolver pocos candidatos buenos que muchos candidatos mediocres.
+
+Como regla general, devuelve como máximo 10 candidatos.
+
+Cada candidato debe contener:
 
 - start: segundo aproximado de inicio;
 - end: segundo aproximado de final;
 - score: puntuación de 0 a 100;
 - category: categoría del momento;
 - reason: explicación breve de por qué puede funcionar;
-- title: título corto y atractivo;
+- title: título corto y atractivo en español;
 - confidence: confianza de 0 a 1.
 
-Reglas:
+La puntuación debe representar el potencial real del momento como clip.
 
-1. Analiza TODA la transcripción antes de decidir.
-2. No devuelvas momentos que sean simplemente conversación normal.
-3. No devuelvas demasiados candidatos.
-4. Es mejor devolver pocos candidatos buenos que muchos candidatos mediocres.
-5. El momento debe tener un principio y un final razonables.
-6. El clip debería poder entenderse por sí mismo.
-7. La puntuación debe reflejar el potencial real del momento.
-8. Prioriza momentos con reacción, tensión, sorpresa, humor o acontecimientos claros.
-9. No conviertas una frase normal en un candidato simplemente porque contiene
-   una palabra llamativa.
-10. Si la transcripción tiene errores de reconocimiento, utiliza el contexto
-    de los segmentos para interpretarla, pero NO inventes acontecimientos.
-11. Los timestamps deben estar basados exclusivamente en los segmentos
-    proporcionados.
-12. No devuelvas candidatos que estén fuera del rango temporal de la
-    transcripción.
-13. Si no existe ningún momento interesante, devuelve una lista vacía.
+Orientación de puntuación:
+
+90-100:
+Momento excepcional, muy entretenido o con gran potencial viral.
+
+80-89:
+Muy buen momento, claramente recomendable.
+
+70-79:
+Buen candidato, aunque no excepcional.
+
+60-69:
+Interesante pero probablemente no merece convertirse en clip.
+
+0-59:
+No debería seleccionarse como clip.
+
+IMPORTANTE:
+
+Si no existe ningún momento suficientemente interesante, devuelve:
+
+{
+  "candidates": []
+}
 
 Devuelve ÚNICAMENTE JSON válido con esta estructura:
 
 {
   "candidates": [
     {
-      "start": 0,
-      "end": 30,
+      "start": 2420,
+      "end": 2470,
       "score": 85,
-      "category": "susto",
-      "reason": "Descripción breve.",
-      "title": "Título del clip",
-      "confidence": 0.92
+      "category": "tensión",
+      "reason": "El fantasma aparece mientras el jugador intenta esconderse y genera una situación de tensión clara.",
+      "title": "Pasó por delante de nosotros 🫣",
+      "confidence": 0.91
     }
   ]
 }
 """
 
 
-def find_transcription() -> Path:
-    if not INPUT_DIR.exists():
+def load_transcription() -> dict:
+    if not INPUT_FILE.exists():
         raise FileNotFoundError(
-            f"Transcription directory not found: "
-            f"{INPUT_DIR}"
+            f"Transcription file not found: {INPUT_FILE}"
         )
 
-    files = sorted(
-        INPUT_DIR.glob("*.json")
-    )
-
-    if not files:
-        raise FileNotFoundError(
-            f"No transcription JSON found in "
-            f"{INPUT_DIR}"
-        )
-
-    if len(files) > 1:
-        raise RuntimeError(
-            "Multiple transcription files found in "
-            f"{INPUT_DIR}. Expected exactly one transcription."
-        )
-
-    return files[0]
-
-
-def load_transcription(
-    input_file: Path,
-) -> dict:
-    with input_file.open(
+    with INPUT_FILE.open(
         "r",
         encoding="utf-8",
     ) as file:
@@ -173,6 +232,92 @@ def get_gemini_client() -> genai.Client:
     )
 
 
+def is_retryable_error(
+    exc: Exception,
+) -> bool:
+    error_text = str(exc).upper()
+
+    retryable_markers = [
+        "503",
+        "UNAVAILABLE",
+        "429",
+        "RESOURCE_EXHAUSTED",
+        "500",
+        "502",
+        "INTERNAL",
+        "DEADLINE_EXCEEDED",
+        "TIMEOUT",
+    ]
+
+    return any(
+        marker in error_text
+        for marker in retryable_markers
+    )
+
+
+def request_gemini(
+    client: genai.Client,
+    prompt: str,
+):
+    last_exception = None
+
+    for attempt in range(
+        1,
+        MAX_RETRIES + 1,
+    ):
+        print(
+            f"Gemini request attempt "
+            f"{attempt}/{MAX_RETRIES}..."
+        )
+
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config={
+                    "response_mime_type": "application/json",
+                },
+            )
+
+            return response
+
+        except Exception as exc:
+            last_exception = exc
+
+            print(
+                f"Gemini request failed: {exc}",
+                file=sys.stderr,
+            )
+
+            if not is_retryable_error(exc):
+                raise
+
+            if attempt >= MAX_RETRIES:
+                print(
+                    "Maximum Gemini retry attempts reached.",
+                    file=sys.stderr,
+                )
+                raise
+
+            delay = RETRY_DELAYS[
+                attempt - 1
+            ]
+
+            print(
+                f"Temporary Gemini error detected."
+                f" Retrying in {delay} seconds..."
+            )
+
+            time.sleep(delay)
+
+    if last_exception is not None:
+        raise last_exception
+
+    raise RuntimeError(
+        "Gemini request failed without an exception."
+    )
+
+
 def analyze_transcription(
     transcription_text: str,
 ) -> dict:
@@ -189,12 +334,9 @@ def analyze_transcription(
         f"using {MODEL_NAME}..."
     )
 
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=prompt,
-        config={
-            "response_mime_type": "application/json",
-        },
+    response = request_gemini(
+        client,
+        prompt,
     )
 
     if not response.text:
@@ -241,29 +383,13 @@ def analyze_transcription(
 
 def validate_candidates(
     result: dict,
-    transcription: dict,
 ) -> None:
     candidates = result["candidates"]
 
-    segments = transcription.get(
-        "segments",
-        [],
-    )
-
-    if not segments:
+    if len(candidates) > 10:
         raise RuntimeError(
-            "Transcription contains no segments."
+            "Gemini returned more than 10 candidates."
         )
-
-    transcription_start = min(
-        float(segment.get("start", 0))
-        for segment in segments
-    )
-
-    transcription_end = max(
-        float(segment.get("end", 0))
-        for segment in segments
-    )
 
     for index, candidate in enumerate(
         candidates,
@@ -313,18 +439,6 @@ def validate_candidates(
                 f"timestamps: {start} -> {end}."
             )
 
-        if start < transcription_start:
-            raise RuntimeError(
-                f"Candidate #{index} starts before "
-                "the transcription."
-            )
-
-        if end > transcription_end:
-            raise RuntimeError(
-                f"Candidate #{index} ends after "
-                "the transcription."
-            )
-
         if not 0 <= score <= 100:
             raise RuntimeError(
                 f"Candidate #{index} has invalid "
@@ -340,14 +454,13 @@ def validate_candidates(
 
 def save_result(
     result: dict,
-    output_file: Path,
 ) -> None:
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    with output_file.open(
+    with OUTPUT_FILE.open(
         "w",
         encoding="utf-8",
     ) as file:
@@ -361,11 +474,7 @@ def save_result(
 
 def main() -> int:
     try:
-        input_file = find_transcription()
-
-        transcription = load_transcription(
-            input_file
-        )
+        transcription = load_transcription()
 
         transcription_text = (
             build_transcription_text(
@@ -378,20 +487,14 @@ def main() -> int:
                 "The transcription contains no text."
             )
 
-        vod_id = input_file.stem
-
-        output_file = (
-            OUTPUT_DIR
-            / f"{vod_id}_candidates.json"
-        )
-
         print(
-            f"VOD ID: {vod_id}"
+            f"VOD ID: "
+            f"{transcription.get('video', 'unknown')}"
         )
 
         print(
             f"Transcription file: "
-            f"{input_file}"
+            f"{INPUT_FILE}"
         )
 
         print(
@@ -409,13 +512,11 @@ def main() -> int:
         )
 
         validate_candidates(
-            result,
-            transcription,
+            result
         )
 
         save_result(
-            result,
-            output_file,
+            result
         )
 
         candidates = result[
@@ -433,8 +534,55 @@ def main() -> int:
         )
 
         print(
-            f"Output: {output_file}"
+            f"Output: {OUTPUT_FILE}"
         )
+
+        print()
+
+        for index, candidate in enumerate(
+            candidates,
+            start=1,
+        ):
+            print(
+                f"Candidate #{index}"
+            )
+
+            print(
+                f"  Start: "
+                f"{candidate['start']}"
+            )
+
+            print(
+                f"  End: "
+                f"{candidate['end']}"
+            )
+
+            print(
+                f"  Score: "
+                f"{candidate['score']}"
+            )
+
+            print(
+                f"  Category: "
+                f"{candidate['category']}"
+            )
+
+            print(
+                f"  Title: "
+                f"{candidate['title']}"
+            )
+
+            print(
+                f"  Reason: "
+                f"{candidate['reason']}"
+            )
+
+            print(
+                f"  Confidence: "
+                f"{candidate['confidence']}"
+            )
+
+            print()
 
         return 0
 
@@ -443,10 +591,9 @@ def main() -> int:
             f"ERROR: {exc}",
             file=sys.stderr,
         )
+
         return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(
-        main()
-    )
+    raise SystemExit(main())
