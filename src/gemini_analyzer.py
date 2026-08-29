@@ -20,7 +20,7 @@ MODEL_NAME = "gemini-3.6-flash"
 ANALYSIS_PROMPT = """
 Eres un analista especializado en contenido para Twitch y clips cortos.
 
-Vas a recibir la transcripción completa de un stream de Twitch.
+Vas a recibir la transcripción COMPLETA de un stream de Twitch.
 
 Tu trabajo es identificar momentos que podrían funcionar bien como clips
 de Twitch y posteriormente como contenido corto para TikTok.
@@ -53,7 +53,7 @@ Para cada candidato devuelve:
 
 Reglas:
 
-1. Analiza toda la transcripción antes de decidir.
+1. Analiza TODA la transcripción antes de decidir.
 2. No devuelvas momentos que sean simplemente conversación normal.
 3. No devuelvas demasiados candidatos.
 4. Es mejor devolver pocos candidatos buenos que muchos candidatos mediocres.
@@ -61,9 +61,15 @@ Reglas:
 6. El clip debería poder entenderse por sí mismo.
 7. La puntuación debe reflejar el potencial real del momento.
 8. Prioriza momentos con reacción, tensión, sorpresa, humor o acontecimientos claros.
-9. No conviertas una frase normal en un candidato simplemente porque contiene una palabra llamativa.
-10. Si la transcripción tiene errores de reconocimiento, utiliza el contexto de los segmentos para interpretarla, pero NO inventes acontecimientos.
-11. Si no existe ningún momento interesante, devuelve una lista vacía.
+9. No conviertas una frase normal en un candidato simplemente porque contiene
+   una palabra llamativa.
+10. Si la transcripción tiene errores de reconocimiento, utiliza el contexto
+    de los segmentos para interpretarla, pero NO inventes acontecimientos.
+11. Los timestamps deben estar basados exclusivamente en los segmentos
+    proporcionados.
+12. No devuelvas candidatos que estén fuera del rango temporal de la
+    transcripción.
+13. Si no existe ningún momento interesante, devuelve una lista vacía.
 
 Devuelve ÚNICAMENTE JSON válido con esta estructura:
 
@@ -101,9 +107,9 @@ def find_transcription() -> Path:
         )
 
     if len(files) > 1:
-        print(
-            f"Multiple transcription files found: "
-            f"{len(files)}"
+        raise RuntimeError(
+            "Multiple transcription files found in "
+            f"{INPUT_DIR}. Expected exactly one transcription."
         )
 
     return files[0]
@@ -174,7 +180,7 @@ def analyze_transcription(
 
     prompt = (
         ANALYSIS_PROMPT
-        + "\n\nTRANSCRIPCIÓN:\n\n"
+        + "\n\nTRANSCRIPCIÓN COMPLETA:\n\n"
         + transcription_text
     )
 
@@ -206,6 +212,7 @@ def analyze_transcription(
             "Gemini raw response:",
             file=sys.stderr,
         )
+
         print(
             response.text,
             file=sys.stderr,
@@ -234,8 +241,29 @@ def analyze_transcription(
 
 def validate_candidates(
     result: dict,
+    transcription: dict,
 ) -> None:
     candidates = result["candidates"]
+
+    segments = transcription.get(
+        "segments",
+        [],
+    )
+
+    if not segments:
+        raise RuntimeError(
+            "Transcription contains no segments."
+        )
+
+    transcription_start = min(
+        float(segment.get("start", 0))
+        for segment in segments
+    )
+
+    transcription_end = max(
+        float(segment.get("end", 0))
+        for segment in segments
+    )
 
     for index, candidate in enumerate(
         candidates,
@@ -283,6 +311,18 @@ def validate_candidates(
             raise RuntimeError(
                 f"Candidate #{index} has invalid "
                 f"timestamps: {start} -> {end}."
+            )
+
+        if start < transcription_start:
+            raise RuntimeError(
+                f"Candidate #{index} starts before "
+                "the transcription."
+            )
+
+        if end > transcription_end:
+            raise RuntimeError(
+                f"Candidate #{index} ends after "
+                "the transcription."
             )
 
         if not 0 <= score <= 100:
@@ -346,6 +386,10 @@ def main() -> int:
         )
 
         print(
+            f"VOD ID: {vod_id}"
+        )
+
+        print(
             f"Transcription file: "
             f"{input_file}"
         )
@@ -365,7 +409,8 @@ def main() -> int:
         )
 
         validate_candidates(
-            result
+            result,
+            transcription,
         )
 
         save_result(
@@ -381,10 +426,12 @@ def main() -> int:
         print(
             "Gemini analysis completed."
         )
+
         print(
             f"Candidates found: "
             f"{len(candidates)}"
         )
+
         print(
             f"Output: {output_file}"
         )
