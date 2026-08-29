@@ -18,67 +18,52 @@ MODEL_NAME = "gemini-3.6-flash"
 
 
 ANALYSIS_PROMPT = """
-Eres un analista especializado en contenido para Twitch
-y clips cortos para TikTok.
+Eres un analista especializado en contenido para Twitch y clips cortos.
 
 Vas a recibir la transcripción completa de un stream de Twitch.
 
-Tu trabajo es identificar los momentos que realmente tienen
-potencial para convertirse en clips.
+Tu trabajo es identificar momentos que podrían funcionar bien como clips
+de Twitch y posteriormente como contenido corto para TikTok.
 
 Busca especialmente:
 
 - momentos graciosos;
-- sustos;
-- reacciones fuertes;
+- sustos o reacciones fuertes;
 - momentos inesperados;
 - errores o fails;
 - situaciones tensas;
 - comentarios espontáneos interesantes;
-- sorpresas;
-- situaciones absurdas;
-- interacciones entretenidas;
-- momentos con potencial viral;
-- momentos que tengan contexto suficiente para entenderse
-  como clip independiente.
+- momentos de sorpresa;
+- interacciones que tengan potencial para entretener;
+- momentos con suficiente contexto para entenderse como clip.
 
-NO inventes acontecimientos.
+NO inventes acontecimientos que no aparecen en la transcripción.
 
-La transcripción puede contener errores de reconocimiento de voz.
-Tenlo en cuenta antes de decidir que una frase es graciosa.
-
-No consideres interesante una frase únicamente porque la
-transcripción parezca absurda.
-
-Utiliza los timestamps de los segmentos.
+Utiliza los timestamps de los segmentos para localizar cada momento.
 
 Para cada candidato devuelve:
 
 - start: segundo aproximado de inicio;
 - end: segundo aproximado de final;
 - score: puntuación de 0 a 100;
-- category: categoría;
-- reason: explicación breve;
+- category: categoría del momento;
+- reason: explicación breve de por qué puede funcionar;
 - title: título corto y atractivo;
 - confidence: confianza de 0 a 1.
 
-Reglas importantes:
+Reglas:
 
-1. No devuelvas conversación normal.
-2. No devuelvas introducciones normales.
-3. No devuelvas explicaciones rutinarias del juego.
-4. No devuelvas simplemente información sobre drops.
-5. No confundas errores de Whisper con momentos graciosos.
-6. No inventes contexto visual que no aparece en la información.
-7. Es mejor devolver pocos candidatos buenos que muchos malos.
-8. Un candidato debe tener un principio y un final razonables.
-9. El clip debe poder entenderse razonablemente por sí mismo.
-10. Prioriza momentos con reacción, sorpresa, tensión,
-    humor o algo claramente interesante.
-11. Si no existe ningún momento suficientemente bueno,
-    devuelve una lista vacía.
-12. No fuerces candidatos para llenar una cantidad determinada.
-13. Solo considera candidatos con potencial real de clip.
+1. Analiza toda la transcripción antes de decidir.
+2. No devuelvas momentos que sean simplemente conversación normal.
+3. No devuelvas demasiados candidatos.
+4. Es mejor devolver pocos candidatos buenos que muchos candidatos mediocres.
+5. El momento debe tener un principio y un final razonables.
+6. El clip debería poder entenderse por sí mismo.
+7. La puntuación debe reflejar el potencial real del momento.
+8. Prioriza momentos con reacción, tensión, sorpresa, humor o acontecimientos claros.
+9. No conviertas una frase normal en un candidato simplemente porque contiene una palabra llamativa.
+10. Si la transcripción tiene errores de reconocimiento, utiliza el contexto de los segmentos para interpretarla, pero NO inventes acontecimientos.
+11. Si no existe ningún momento interesante, devuelve una lista vacía.
 
 Devuelve ÚNICAMENTE JSON válido con esta estructura:
 
@@ -106,15 +91,19 @@ def find_transcription() -> Path:
         )
 
     files = sorted(
-        INPUT_DIR.glob("*.json"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
+        INPUT_DIR.glob("*.json")
     )
 
     if not files:
         raise FileNotFoundError(
-            f"No transcription JSON files found "
-            f"in {INPUT_DIR}"
+            f"No transcription JSON found in "
+            f"{INPUT_DIR}"
+        )
+
+    if len(files) > 1:
+        print(
+            f"Multiple transcription files found: "
+            f"{len(files)}"
         )
 
     return files[0]
@@ -123,7 +112,6 @@ def find_transcription() -> Path:
 def load_transcription(
     input_file: Path,
 ) -> dict:
-
     with input_file.open(
         "r",
         encoding="utf-8",
@@ -134,7 +122,6 @@ def load_transcription(
 def build_transcription_text(
     transcription: dict,
 ) -> str:
-
     segments = transcription.get(
         "segments",
         [],
@@ -144,24 +131,15 @@ def build_transcription_text(
 
     for segment in segments:
         start = float(
-            segment.get(
-                "start",
-                0,
-            )
+            segment.get("start", 0)
         )
 
         end = float(
-            segment.get(
-                "end",
-                0,
-            )
+            segment.get("end", 0)
         )
 
         text = str(
-            segment.get(
-                "text",
-                "",
-            )
+            segment.get("text", "")
         ).strip()
 
         if not text:
@@ -175,7 +153,6 @@ def build_transcription_text(
 
 
 def get_gemini_client() -> genai.Client:
-
     api_key = os.getenv(
         "GEMINI_API_KEY"
     )
@@ -193,7 +170,6 @@ def get_gemini_client() -> genai.Client:
 def analyze_transcription(
     transcription_text: str,
 ) -> dict:
-
     client = get_gemini_client()
 
     prompt = (
@@ -230,7 +206,6 @@ def analyze_transcription(
             "Gemini raw response:",
             file=sys.stderr,
         )
-
         print(
             response.text,
             file=sys.stderr,
@@ -260,14 +235,12 @@ def analyze_transcription(
 def validate_candidates(
     result: dict,
 ) -> None:
-
     candidates = result["candidates"]
 
     for index, candidate in enumerate(
         candidates,
         start=1,
     ):
-
         required_fields = [
             "start",
             "end",
@@ -303,8 +276,7 @@ def validate_candidates(
 
         if start < 0:
             raise RuntimeError(
-                f"Candidate #{index} has "
-                "a negative start."
+                f"Candidate #{index} has a negative start."
             )
 
         if end <= start:
@@ -330,7 +302,6 @@ def save_result(
     result: dict,
     output_file: Path,
 ) -> None:
-
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
@@ -367,10 +338,7 @@ def main() -> int:
                 "The transcription contains no text."
             )
 
-        vod_id = transcription.get(
-            "vod_id",
-            input_file.stem,
-        )
+        vod_id = input_file.stem
 
         output_file = (
             OUTPUT_DIR
@@ -410,67 +378,16 @@ def main() -> int:
         ]
 
         print()
-
         print(
             "Gemini analysis completed."
         )
-
         print(
             f"Candidates found: "
             f"{len(candidates)}"
         )
-
         print(
             f"Output: {output_file}"
         )
-
-        print()
-
-        for index, candidate in enumerate(
-            candidates,
-            start=1,
-        ):
-
-            print(
-                f"Candidate #{index}"
-            )
-
-            print(
-                f"  Start: "
-                f"{candidate['start']}"
-            )
-
-            print(
-                f"  End: "
-                f"{candidate['end']}"
-            )
-
-            print(
-                f"  Score: "
-                f"{candidate['score']}"
-            )
-
-            print(
-                f"  Category: "
-                f"{candidate['category']}"
-            )
-
-            print(
-                f"  Title: "
-                f"{candidate['title']}"
-            )
-
-            print(
-                f"  Reason: "
-                f"{candidate['reason']}"
-            )
-
-            print(
-                f"  Confidence: "
-                f"{candidate['confidence']}"
-            )
-
-            print()
 
         return 0
 
@@ -479,9 +396,10 @@ def main() -> int:
             f"ERROR: {exc}",
             file=sys.stderr,
         )
-
         return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        main()
+    )
