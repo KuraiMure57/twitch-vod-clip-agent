@@ -32,32 +32,43 @@ def find_vod() -> Path:
             f"No VOD MP4 found in {VOD_DIR}"
         )
 
+    if len(files) > 1:
+        raise RuntimeError(
+            "Multiple VOD files found in "
+            f"{VOD_DIR}. Expected exactly one VOD."
+        )
+
     return files[0]
 
 
-def find_candidates_file() -> Path:
+def find_candidates_file(
+    vod_id: str,
+) -> Path:
+
     if not CANDIDATES_DIR.exists():
         raise FileNotFoundError(
             "Filtered candidates directory not found: "
             f"{CANDIDATES_DIR}"
         )
 
-    files = sorted(
-        CANDIDATES_DIR.glob("*_selected.json")
+    candidates_file = (
+        CANDIDATES_DIR
+        / f"{vod_id}_selected.json"
     )
 
-    if not files:
+    if not candidates_file.exists():
         raise FileNotFoundError(
-            "No filtered candidates file found in "
-            f"{CANDIDATES_DIR}"
+            "Filtered candidates file not found for "
+            f"VOD {vod_id}: {candidates_file}"
         )
 
-    return files[0]
+    return candidates_file
 
 
 def load_candidates(
     input_file: Path,
 ) -> list[dict]:
+
     with input_file.open(
         "r",
         encoding="utf-8",
@@ -84,6 +95,7 @@ def validate_candidate(
     candidate: dict,
     index: int,
 ) -> None:
+
     required_fields = [
         "start",
         "end",
@@ -124,6 +136,7 @@ def validate_candidate(
 def sanitize_filename(
     text: str,
 ) -> str:
+
     allowed = (
         "abcdefghijklmnopqrstuvwxyz"
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -152,6 +165,7 @@ def generate_clip(
     vod_file: Path,
     output_dir: Path,
 ) -> Path:
+
     start = float(
         candidate["start"]
     )
@@ -184,22 +198,28 @@ def generate_clip(
     print(
         f"Generating clip #{index}"
     )
+
     print(
         f"  Start: {start:.2f}s"
     )
+
     print(
         f"  End: {end:.2f}s"
     )
+
     print(
         f"  Duration: {duration:.2f}s"
     )
+
     print(
         f"  Score: {score}"
     )
+
     print(
         f"  Category: "
         f"{candidate['category']}"
     )
+
     print(
         f"  Title: "
         f"{candidate['title']}"
@@ -250,24 +270,26 @@ def main() -> int:
         print(
             "========================================="
         )
+
         print(
             "Clip generation"
         )
+
         print(
             "========================================="
         )
 
         vod_file = find_vod()
 
-        candidates_file = (
-            find_candidates_file()
+        vod_id = vod_file.stem
+
+        candidates_file = find_candidates_file(
+            vod_id
         )
 
         candidates = load_candidates(
             candidates_file
         )
-
-        vod_id = vod_file.stem
 
         output_dir = (
             OUTPUT_DIR / vod_id
@@ -276,6 +298,10 @@ def main() -> int:
         output_dir.mkdir(
             parents=True,
             exist_ok=True,
+        )
+
+        print(
+            f"VOD ID: {vod_id}"
         )
 
         print(
@@ -293,13 +319,39 @@ def main() -> int:
         )
 
         if not candidates:
+            manifest_file = (
+                output_dir
+                / "clips_manifest.json"
+            )
+
+            with manifest_file.open(
+                "w",
+                encoding="utf-8",
+            ) as file:
+                json.dump(
+                    {
+                        "vod_id": vod_id,
+                        "vod": str(vod_file),
+                        "clips": [],
+                    },
+                    file,
+                    indent=2,
+                    ensure_ascii=False,
+                )
+
             print()
             print(
                 "No selected candidates."
             )
+
             print(
                 "No clips will be generated."
             )
+
+            print(
+                f"Manifest: {manifest_file}"
+            )
+
             return 0
 
         generated_clips = []
@@ -377,21 +429,26 @@ def main() -> int:
         print(
             "========================================="
         )
+
         print(
             "Clip generation completed."
         )
+
         print(
             f"Clips generated: "
             f"{len(generated_clips)}"
         )
+
         print(
             f"Output directory: "
             f"{output_dir}"
         )
+
         print(
             f"Manifest: "
             f"{manifest_file}"
         )
+
         print(
             "========================================="
         )
@@ -403,10 +460,12 @@ def main() -> int:
             "ERROR: FFmpeg failed.",
             file=sys.stderr,
         )
+
         print(
             f"Exit code: {exc.returncode}",
             file=sys.stderr,
         )
+
         return 1
 
     except Exception as exc:
@@ -414,6 +473,7 @@ def main() -> int:
             f"ERROR: {exc}",
             file=sys.stderr,
         )
+
         return 1
 
 
