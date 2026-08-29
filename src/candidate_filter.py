@@ -3,38 +3,53 @@ import sys
 from pathlib import Path
 
 
-INPUT_FILE = Path(
-    "data/analysis/2846005700_candidates.json"
+INPUT_DIR = Path(
+    "data/analysis"
 )
 
 OUTPUT_DIR = Path(
     "data/filtered_candidates"
 )
 
-OUTPUT_FILE = (
-    OUTPUT_DIR / "2846005700_selected.json"
-)
-
-
 MIN_SCORE = 70
 MIN_DURATION = 15
 MAX_DURATION = 90
 
 
-def load_candidates() -> dict:
-    if not INPUT_FILE.exists():
+def find_analysis_file() -> Path:
+    if not INPUT_DIR.exists():
         raise FileNotFoundError(
-            f"Gemini analysis file not found: {INPUT_FILE}"
+            f"Analysis directory not found: "
+            f"{INPUT_DIR}"
         )
 
-    with INPUT_FILE.open(
+    files = sorted(
+        INPUT_DIR.glob("*_candidates.json")
+    )
+
+    if not files:
+        raise FileNotFoundError(
+            f"No Gemini candidates file found in "
+            f"{INPUT_DIR}"
+        )
+
+    return files[0]
+
+
+def load_candidates(
+    input_file: Path,
+) -> dict:
+    with input_file.open(
         "r",
         encoding="utf-8",
     ) as file:
         return json.load(file)
 
 
-def validate_candidate(candidate: dict, index: int) -> None:
+def validate_candidate(
+    candidate: dict,
+    index: int,
+) -> None:
     required_fields = [
         "start",
         "end",
@@ -57,9 +72,14 @@ def validate_candidate(candidate: dict, index: int) -> None:
         end = float(candidate["end"])
         score = float(candidate["score"])
         confidence = float(candidate["confidence"])
-    except (TypeError, ValueError) as exc:
+
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
         raise RuntimeError(
-            f"Candidate #{index} contains invalid numeric values."
+            f"Candidate #{index} contains invalid "
+            "numeric values."
         ) from exc
 
     if start < 0:
@@ -69,19 +89,20 @@ def validate_candidate(candidate: dict, index: int) -> None:
 
     if end <= start:
         raise RuntimeError(
-            f"Candidate #{index} has invalid timestamps: "
-            f"{start} -> {end}."
+            f"Candidate #{index} has invalid "
+            f"timestamps: {start} -> {end}."
         )
 
     if not 0 <= score <= 100:
         raise RuntimeError(
-            f"Candidate #{index} has invalid score: {score}."
+            f"Candidate #{index} has invalid "
+            f"score: {score}."
         )
 
     if not 0 <= confidence <= 1:
         raise RuntimeError(
-            f"Candidate #{index} has invalid confidence: "
-            f"{confidence}."
+            f"Candidate #{index} has invalid "
+            f"confidence: {confidence}."
         )
 
 
@@ -102,9 +123,17 @@ def filter_candidates(
             index,
         )
 
-        start = float(candidate["start"])
-        end = float(candidate["end"])
-        score = float(candidate["score"])
+        start = float(
+            candidate["start"]
+        )
+
+        end = float(
+            candidate["end"]
+        )
+
+        score = float(
+            candidate["score"]
+        )
 
         duration = end - start
 
@@ -119,7 +148,9 @@ def filter_candidates(
             rejected_duration += 1
             continue
 
-        normalized_candidate = dict(candidate)
+        normalized_candidate = dict(
+            candidate
+        )
 
         normalized_candidate["start"] = round(
             start,
@@ -171,6 +202,7 @@ def filter_candidates(
 def save_result(
     selected: list[dict],
     statistics: dict,
+    output_file: Path,
 ) -> None:
     OUTPUT_DIR.mkdir(
         parents=True,
@@ -182,7 +214,7 @@ def save_result(
         "candidates": selected,
     }
 
-    with OUTPUT_FILE.open(
+    with output_file.open(
         "w",
         encoding="utf-8",
     ) as file:
@@ -196,7 +228,11 @@ def save_result(
 
 def main() -> int:
     try:
-        data = load_candidates()
+        input_file = find_analysis_file()
+
+        data = load_candidates(
+            input_file
+        )
 
         candidates = data.get(
             "candidates",
@@ -210,6 +246,16 @@ def main() -> int:
             raise RuntimeError(
                 "Gemini 'candidates' must be a list."
             )
+
+        vod_id = input_file.name.replace(
+            "_candidates.json",
+            "",
+        )
+
+        output_file = (
+            OUTPUT_DIR
+            / f"{vod_id}_selected.json"
+        )
 
         print(
             f"Gemini candidates received: "
@@ -232,6 +278,7 @@ def main() -> int:
         save_result(
             selected,
             statistics,
+            output_file,
         )
 
         print()
@@ -255,11 +302,15 @@ def main() -> int:
             f"{statistics['rejected_by_duration']}"
         )
         print()
+        print(
+            f"Output: {output_file}"
+        )
 
         for index, candidate in enumerate(
             selected,
             start=1,
         ):
+            print()
             print(
                 f"Selected candidate #{index}"
             )
@@ -287,11 +338,6 @@ def main() -> int:
                 f"  Title: "
                 f"{candidate['title']}"
             )
-            print()
-
-        print(
-            f"Output: {OUTPUT_FILE}"
-        )
 
         return 0
 
@@ -300,9 +346,10 @@ def main() -> int:
             f"ERROR: {exc}",
             file=sys.stderr,
         )
-
         return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        main()
+    )
