@@ -21,6 +21,7 @@ jobs:
           echo "Operating system:"
           uname -a
           echo
+
           echo "Ubuntu version:"
           lsb_release -a
 
@@ -107,7 +108,7 @@ jobs:
         env:
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
-          FORCE_VOD_TEST_DOWNLOAD: "true"
+          FORCE_VOD_DOWNLOAD: "true"
         run: |
           python src/twitch_vod_downloader.py
 
@@ -137,60 +138,68 @@ jobs:
             exit 1
           fi
 
-          find data/vods -maxdepth 1 -type f -print
+          VOD_FILE_COUNT=$(find data/vods \
+            -maxdepth 1 \
+            -type f \
+            -name "*.mp4" \
+            | wc -l)
 
-          VOD_FILE_COUNT=$(find data/vods -maxdepth 1 -type f -name "*.mp4" | wc -l)
-
-          echo
           echo "MP4 files found: $VOD_FILE_COUNT"
 
-          if [ "$VOD_FILE_COUNT" -eq 0 ]; then
-            echo "ERROR: No complete VOD MP4 was downloaded."
+          if [ "$VOD_FILE_COUNT" -ne 1 ]; then
+            echo "ERROR: Expected exactly one complete VOD MP4."
             exit 1
           fi
+
+          VOD_FILE=$(find data/vods \
+            -maxdepth 1 \
+            -type f \
+            -name "*.mp4")
+
+          VOD_ID=$(basename "$VOD_FILE" .mp4)
+
+          echo "VOD file: $VOD_FILE"
+          echo "VOD ID: $VOD_ID"
+
+          echo "VOD_ID=$VOD_ID" >> "$GITHUB_ENV"
 
           echo
           echo "Complete VOD download verified."
 
       - name: Inspect complete VOD
         run: |
-          for file in data/vods/*.mp4; do
-            echo "========================================="
-            echo "VOD: $file"
-            echo "========================================="
+          echo "========================================="
+          echo "Complete VOD inspection:"
+          echo "========================================="
 
-            ffprobe \
-              -v error \
-              -show_entries format=duration,size \
-              -of default=noprint_wrappers=1 \
-              "$file"
-          done
+          ffprobe \
+            -v error \
+            -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 \
+            "data/vods/${VOD_ID}.mp4"
 
       - name: Run Whisper transcription
         run: |
           python src/whisper_transcriber.py
 
-      - name: Show Whisper transcription
+      - name: Check Whisper transcription
         run: |
           echo "========================================="
           echo "Whisper transcription:"
           echo "========================================="
 
-          find data/transcriptions -maxdepth 1 -type f -name "*.json" -print
+          TRANSCRIPTION_FILE="data/transcriptions/${VOD_ID}.json"
 
-          TRANSCRIPTION_COUNT=$(find data/transcriptions -maxdepth 1 -type f -name "*.json" | wc -l)
-
-          if [ "$TRANSCRIPTION_COUNT" -eq 0 ]; then
-            echo "ERROR: Whisper transcription output not found."
+          if [ ! -f "$TRANSCRIPTION_FILE" ]; then
+            echo "ERROR: Expected Whisper output not found:"
+            echo "$TRANSCRIPTION_FILE"
             exit 1
           fi
 
-          for file in data/transcriptions/*.json; do
-            cat "$file"
-          done
+          cat "$TRANSCRIPTION_FILE"
 
           echo
-          echo "========================================="
+          echo "Whisper transcription verified."
 
       - name: Run Gemini analysis
         env:
@@ -198,57 +207,47 @@ jobs:
         run: |
           python src/gemini_analyzer.py
 
-      - name: Show Gemini candidates
+      - name: Check Gemini analysis
         run: |
           echo "========================================="
           echo "Gemini candidates:"
           echo "========================================="
 
-          find data/analysis -maxdepth 1 -type f -name "*_candidates.json" -print
+          ANALYSIS_FILE="data/analysis/${VOD_ID}_candidates.json"
 
-          ANALYSIS_COUNT=$(find data/analysis -maxdepth 1 -type f -name "*_candidates.json" | wc -l)
-
-          if [ "$ANALYSIS_COUNT" -eq 0 ]; then
-            echo "ERROR: Gemini analysis output not found."
+          if [ ! -f "$ANALYSIS_FILE" ]; then
+            echo "ERROR: Expected Gemini output not found:"
+            echo "$ANALYSIS_FILE"
             exit 1
           fi
 
-          for file in data/analysis/*_candidates.json; do
-            cat "$file"
-          done
+          cat "$ANALYSIS_FILE"
 
           echo
-          echo "========================================="
+          echo "Gemini analysis verified."
 
       - name: Filter candidates
         run: |
           python src/candidate_filter.py
 
-      - name: Show filtered candidates
+      - name: Check filtered candidates
         run: |
           echo "========================================="
           echo "Filtered candidates:"
           echo "========================================="
 
-          find data/filtered_candidates \
-            -maxdepth 1 \
-            -type f \
-            -name "*_selected.json" \
-            -print
+          FILTERED_FILE="data/filtered_candidates/${VOD_ID}_selected.json"
 
-          FILTERED_COUNT=$(find data/filtered_candidates -maxdepth 1 -type f -name "*_selected.json" | wc -l)
-
-          if [ "$FILTERED_COUNT" -eq 0 ]; then
-            echo "ERROR: Filtered candidates output not found."
+          if [ ! -f "$FILTERED_FILE" ]; then
+            echo "ERROR: Expected filtered candidates output not found:"
+            echo "$FILTERED_FILE"
             exit 1
           fi
 
-          for file in data/filtered_candidates/*_selected.json; do
-            cat "$file"
-          done
+          cat "$FILTERED_FILE"
 
           echo
-          echo "========================================="
+          echo "Candidate filtering verified."
 
       - name: Generate clips
         run: |
@@ -260,29 +259,38 @@ jobs:
           echo "Generated clips:"
           echo "========================================="
 
-          if [ ! -d data/clips ]; then
-            echo "ERROR: data/clips directory does not exist."
+          CLIP_DIR="data/clips/${VOD_ID}"
+
+          if [ ! -d "$CLIP_DIR" ]; then
+            echo "ERROR: Clip directory does not exist:"
+            echo "$CLIP_DIR"
             exit 1
           fi
 
-          find data/clips -type f -print
+          find "$CLIP_DIR" -type f -print
 
-          CLIP_COUNT=$(find data/clips -type f -name "*.mp4" | wc -l)
+          CLIP_COUNT=$(find "$CLIP_DIR" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.mp4" \
+            | wc -l)
 
           echo
           echo "MP4 clips found: $CLIP_COUNT"
 
           if [ "$CLIP_COUNT" -eq 0 ]; then
-            echo "ERROR: No clips were generated."
-            exit 1
+            echo "No clips were generated."
+            echo "This is valid when no candidates pass the filter."
+          else
+            echo
+            echo "Clip generation verified."
           fi
-
-          echo
-          echo "Clip generation verified."
 
       - name: Inspect generated clips
         run: |
-          for file in data/clips/**/*.mp4 data/clips/*.mp4; do
+          CLIP_DIR="data/clips/${VOD_ID}"
+
+          for file in "$CLIP_DIR"/*.mp4; do
             if [ -f "$file" ]; then
               echo "========================================="
               echo "Clip: $file"
@@ -302,60 +310,52 @@ jobs:
           echo "Clips manifest:"
           echo "========================================="
 
-          find data/clips \
-            -type f \
-            -name "clips_manifest.json" \
-            -print
+          MANIFEST_FILE="data/clips/${VOD_ID}/clips_manifest.json"
 
-          MANIFEST_COUNT=$(find data/clips -type f -name "clips_manifest.json" | wc -l)
-
-          if [ "$MANIFEST_COUNT" -eq 0 ]; then
-            echo "ERROR: Clips manifest was not generated."
+          if [ ! -f "$MANIFEST_FILE" ]; then
+            echo "ERROR: Clips manifest was not generated:"
+            echo "$MANIFEST_FILE"
             exit 1
           fi
 
-          for file in data/clips/*/clips_manifest.json; do
-            if [ -f "$file" ]; then
-              cat "$file"
-            fi
-          done
+          cat "$MANIFEST_FILE"
 
           echo
-          echo "========================================="
+          echo "Clips manifest verified."
 
       - name: Upload Whisper transcription
         uses: actions/upload-artifact@v4
         with:
           name: whisper-transcription-complete-test
-          path: data/transcriptions/*.json
+          path: data/transcriptions/${{ env.VOD_ID }}.json
           if-no-files-found: error
 
       - name: Upload Gemini analysis
         uses: actions/upload-artifact@v4
         with:
           name: gemini-analysis-complete-test
-          path: data/analysis/*.json
+          path: data/analysis/${{ env.VOD_ID }}_candidates.json
           if-no-files-found: error
 
       - name: Upload filtered candidates
         uses: actions/upload-artifact@v4
         with:
           name: filtered-candidates-test
-          path: data/filtered_candidates/*.json
+          path: data/filtered_candidates/${{ env.VOD_ID }}_selected.json
           if-no-files-found: error
 
       - name: Upload generated clips
         uses: actions/upload-artifact@v4
         with:
           name: generated-clips-test
-          path: data/clips/**/*.mp4
-          if-no-files-found: error
+          path: data/clips/${{ env.VOD_ID }}/*.mp4
+          if-no-files-found: warn
 
       - name: Upload clips manifest
         uses: actions/upload-artifact@v4
         with:
           name: clips-manifest-test
-          path: data/clips/**/clips_manifest.json
+          path: data/clips/${{ env.VOD_ID }}/clips_manifest.json
           if-no-files-found: error
 
       - name: Complete VOD pipeline test completed
@@ -363,6 +363,7 @@ jobs:
           echo "========================================="
           echo "Complete VOD pipeline test completed."
           echo "========================================="
+          echo "VOD ID: $VOD_ID"
           echo "Python: OK"
           echo "FFmpeg: OK"
           echo "FFprobe: OK"
