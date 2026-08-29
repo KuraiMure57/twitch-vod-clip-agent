@@ -21,150 +21,86 @@ OUTPUT_FILE = (
 
 MODEL_NAME = "gemini-3.6-flash"
 
-MAX_RETRIES = 3
+# Número aproximado de caracteres enviados a Gemini por bloque.
+CHUNK_SIZE = 12000
 
-RETRY_DELAYS = [
-    10,
-    30,
-    60,
-]
+# Número máximo de reintentos cuando Gemini devuelve un error temporal.
+MAX_RETRIES = 4
+
+# Tiempo inicial de espera entre reintentos.
+INITIAL_RETRY_DELAY = 10
+
+# Máximo de candidatos que puede devolver cada bloque.
+MAX_CANDIDATES_PER_CHUNK = 5
 
 
 ANALYSIS_PROMPT = """
 Eres un analista especializado en contenido para Twitch y clips cortos.
 
-Vas a recibir la transcripción COMPLETA de un stream de Twitch.
+Vas a recibir una parte de la transcripción de un stream de Twitch.
 
-Tu trabajo es identificar únicamente los momentos que tengan potencial real
-para convertirse en clips de Twitch y posteriormente en vídeos cortos para
-TikTok.
-
-La transcripción contiene timestamps reales de los segmentos de Whisper.
+Tu trabajo es identificar momentos que podrían funcionar bien como clips
+de Twitch y posteriormente como contenido corto para TikTok.
 
 Busca especialmente:
 
-- sustos;
-- reacciones fuertes;
 - momentos graciosos;
+- sustos o reacciones fuertes;
 - momentos inesperados;
-- fails;
-- errores;
+- errores o fails;
 - situaciones tensas;
-- persecuciones;
-- muertes;
-- victorias;
-- descubrimientos;
 - comentarios espontáneos interesantes;
-- frases especialmente graciosas;
-- interacciones entretenidas;
-- situaciones que puedan generar curiosidad;
-- momentos con una reacción clara del streamer;
-- momentos que tengan contexto suficiente para funcionar como clip.
+- momentos de sorpresa;
+- interacciones que tengan potencial para entretener;
+- momentos con suficiente contexto para entenderse como clip.
 
 IMPORTANTE:
 
-La transcripción puede contener errores de reconocimiento de voz.
+NO inventes acontecimientos que no aparecen en la transcripción.
 
-No debes interpretar literalmente palabras claramente deformadas por Whisper
-si el contexto de los segmentos cercanos permite entender lo que realmente
-está ocurriendo.
+La transcripción contiene timestamps reales. Utilízalos para localizar
+cada momento.
 
-Sin embargo:
+No confundas una frase extraña de Whisper con un acontecimiento real.
+Si el texto parece claramente mal transcrito o incomprensible, reduce
+la confianza y evita inventar contexto.
 
-NO inventes acontecimientos.
-
-NO supongas que ha ocurrido un susto, una muerte, una persecución, una
-victoria o cualquier otro acontecimiento si la transcripción no proporciona
-evidencia suficiente.
-
-Utiliza siempre los timestamps de los segmentos proporcionados.
-
-El candidato debe cubrir el momento interesante completo.
-
-Cuando sea posible, incluye unos segundos de contexto antes del momento
-principal y unos segundos después para que el clip tenga sentido.
-
-Duración recomendada:
-
-- mínimo aproximado: 15 segundos;
-- máximo aproximado: 90 segundos.
-
-No es necesario utilizar exactamente esos límites si hacerlo perjudica
-claramente el contexto del momento.
-
-Prioridad:
-
-1. Momentos claramente entretenidos.
-2. Momentos con una reacción fuerte.
-3. Momentos inesperados.
-4. Momentos tensos o de suspense.
-5. Momentos graciosos.
-6. Momentos con potencial para TikTok.
-
-NO devuelvas:
-
-- saludos;
-- introducciones normales;
-- explicaciones rutinarias;
-- conversaciones normales;
-- comentarios sin interés;
-- información sobre drops salvo que exista un momento realmente entretenido
-  asociado a ellos;
-- fragmentos cuyo único interés sea que el streamer está hablando.
-
-Es mejor devolver pocos candidatos buenos que muchos candidatos mediocres.
-
-Como regla general, devuelve como máximo 10 candidatos.
-
-Cada candidato debe contener:
+Para cada candidato devuelve:
 
 - start: segundo aproximado de inicio;
 - end: segundo aproximado de final;
 - score: puntuación de 0 a 100;
 - category: categoría del momento;
 - reason: explicación breve de por qué puede funcionar;
-- title: título corto y atractivo en español;
+- title: título corto y atractivo;
 - confidence: confianza de 0 a 1.
 
-La puntuación debe representar el potencial real del momento como clip.
+Reglas:
 
-Orientación de puntuación:
-
-90-100:
-Momento excepcional, muy entretenido o con gran potencial viral.
-
-80-89:
-Muy buen momento, claramente recomendable.
-
-70-79:
-Buen candidato, aunque no excepcional.
-
-60-69:
-Interesante pero probablemente no merece convertirse en clip.
-
-0-59:
-No debería seleccionarse como clip.
-
-IMPORTANTE:
-
-Si no existe ningún momento suficientemente interesante, devuelve:
-
-{
-  "candidates": []
-}
+1. No devuelvas momentos que sean simplemente conversación normal.
+2. No devuelvas demasiados candidatos.
+3. Es mejor devolver pocos candidatos buenos que muchos candidatos mediocres.
+4. El momento debe tener un principio y un final razonables.
+5. El clip debería poder entenderse por sí mismo.
+6. La puntuación debe reflejar el potencial real del momento.
+7. Si no existe ningún momento interesante, devuelve una lista vacía.
+8. No inventes reacciones, sustos, muertes, persecuciones ni acontecimientos
+   que no aparezcan en el texto.
+9. No uses información que no aparezca en esta parte de la transcripción.
+10. Prioriza momentos realmente interesantes sobre frases simplemente llamativas.
 
 Devuelve ÚNICAMENTE JSON válido con esta estructura:
 
 {
   "candidates": [
     {
-      "start": 2420,
-      "end": 2470,
+      "start": 0,
+      "end": 30,
       "score": 85,
-      "category": "tensión",
-      "reason": "El fantasma aparece mientras el jugador intenta esconderse y genera una situación de tensión clara.",
-      "title": "Pasó por delante de nosotros 🫣",
-      "confidence": 0.91
+      "category": "susto",
+      "reason": "Descripción breve.",
+      "title": "Título del clip",
+      "confidence": 0.92
     }
   ]
 }
@@ -184,15 +120,15 @@ def load_transcription() -> dict:
         return json.load(file)
 
 
-def build_transcription_text(
+def build_transcription_segments(
     transcription: dict,
-) -> str:
+) -> list[dict]:
     segments = transcription.get(
         "segments",
         [],
     )
 
-    lines = []
+    result = []
 
     for segment in segments:
         start = float(
@@ -210,11 +146,53 @@ def build_transcription_text(
         if not text:
             continue
 
-        lines.append(
-            f"[{start:.2f} - {end:.2f}] {text}"
+        result.append(
+            {
+                "start": start,
+                "end": end,
+                "text": text,
+            }
         )
 
-    return "\n".join(lines)
+    return result
+
+
+def create_chunks(
+    segments: list[dict],
+) -> list[str]:
+    chunks = []
+    current_lines = []
+    current_length = 0
+
+    for segment in segments:
+        line = (
+            f"[{segment['start']:.2f} - "
+            f"{segment['end']:.2f}] "
+            f"{segment['text']}"
+        )
+
+        line_length = len(line) + 1
+
+        if (
+            current_lines
+            and current_length + line_length > CHUNK_SIZE
+        ):
+            chunks.append(
+                "\n".join(current_lines)
+            )
+
+            current_lines = []
+            current_length = 0
+
+        current_lines.append(line)
+        current_length += line_length
+
+    if current_lines:
+        chunks.append(
+            "\n".join(current_lines)
+        )
+
+    return chunks
 
 
 def get_gemini_client() -> genai.Client:
@@ -232,45 +210,24 @@ def get_gemini_client() -> genai.Client:
     )
 
 
-def is_retryable_error(
-    exc: Exception,
-) -> bool:
-    error_text = str(exc).upper()
-
-    retryable_markers = [
-        "503",
-        "UNAVAILABLE",
-        "429",
-        "RESOURCE_EXHAUSTED",
-        "500",
-        "502",
-        "INTERNAL",
-        "DEADLINE_EXCEEDED",
-        "TIMEOUT",
-    ]
-
-    return any(
-        marker in error_text
-        for marker in retryable_markers
-    )
-
-
 def request_gemini(
     client: genai.Client,
     prompt: str,
-):
-    last_exception = None
+    chunk_number: int,
+) -> dict:
+    delay = INITIAL_RETRY_DELAY
 
     for attempt in range(
         1,
         MAX_RETRIES + 1,
     ):
-        print(
-            f"Gemini request attempt "
-            f"{attempt}/{MAX_RETRIES}..."
-        )
-
         try:
+            print(
+                f"Gemini request for chunk "
+                f"{chunk_number} "
+                f"(attempt {attempt}/{MAX_RETRIES})..."
+            )
+
             response = client.models.generate_content(
                 model=MODEL_NAME,
                 contents=prompt,
@@ -279,139 +236,138 @@ def request_gemini(
                 },
             )
 
-            return response
+            if not response.text:
+                raise RuntimeError(
+                    "Gemini returned an empty response."
+                )
+
+            try:
+                result = json.loads(
+                    response.text
+                )
+            except json.JSONDecodeError as exc:
+                print(
+                    "Gemini raw response:",
+                    file=sys.stderr,
+                )
+
+                print(
+                    response.text,
+                    file=sys.stderr,
+                )
+
+                raise RuntimeError(
+                    "Gemini did not return valid JSON."
+                ) from exc
+
+            if "candidates" not in result:
+                raise RuntimeError(
+                    "Gemini response does not contain "
+                    "the 'candidates' field."
+                )
+
+            if not isinstance(
+                result["candidates"],
+                list,
+            ):
+                raise RuntimeError(
+                    "Gemini 'candidates' must be a list."
+                )
+
+            return result
 
         except Exception as exc:
-            last_exception = exc
+            error_text = str(exc)
 
             print(
-                f"Gemini request failed: {exc}",
+                f"Gemini request failed: {error_text}",
                 file=sys.stderr,
             )
 
-            if not is_retryable_error(exc):
-                raise
+            is_temporary_error = (
+                "503" in error_text
+                or "UNAVAILABLE" in error_text
+                or "429" in error_text
+                or "RESOURCE_EXHAUSTED" in error_text
+                or "429" in error_text
+            )
 
-            if attempt >= MAX_RETRIES:
-                print(
-                    "Maximum Gemini retry attempts reached.",
-                    file=sys.stderr,
-                )
+            if (
+                not is_temporary_error
+                or attempt >= MAX_RETRIES
+            ):
                 raise
-
-            delay = RETRY_DELAYS[
-                attempt - 1
-            ]
 
             print(
-                f"Temporary Gemini error detected."
-                f" Retrying in {delay} seconds..."
+                f"Temporary Gemini error. "
+                f"Waiting {delay} seconds before retry..."
             )
 
             time.sleep(delay)
 
-    if last_exception is not None:
-        raise last_exception
+            delay *= 2
 
     raise RuntimeError(
-        "Gemini request failed without an exception."
+        f"Gemini request failed after "
+        f"{MAX_RETRIES} attempts."
     )
 
 
-def analyze_transcription(
-    transcription_text: str,
-) -> dict:
-    client = get_gemini_client()
-
+def analyze_chunk(
+    client: genai.Client,
+    chunk: str,
+    chunk_number: int,
+    total_chunks: int,
+) -> list[dict]:
     prompt = (
         ANALYSIS_PROMPT
-        + "\n\nTRANSCRIPCIÓN COMPLETA:\n\n"
-        + transcription_text
+        + "\n\n"
+        + f"ESTA ES LA PARTE {chunk_number} "
+        + f"DE {total_chunks} DE LA TRANSCRIPCIÓN:\n\n"
+        + chunk
     )
 
-    print(
-        f"Sending transcription to Gemini "
-        f"using {MODEL_NAME}..."
-    )
-
-    response = request_gemini(
+    result = request_gemini(
         client,
         prompt,
+        chunk_number,
     )
 
-    if not response.text:
-        raise RuntimeError(
-            "Gemini returned an empty response."
-        )
+    candidates = result.get(
+        "candidates",
+        [],
+    )
 
-    try:
-        result = json.loads(
-            response.text
-        )
-
-    except json.JSONDecodeError as exc:
-        print(
-            "Gemini raw response:",
-            file=sys.stderr,
-        )
-
-        print(
-            response.text,
-            file=sys.stderr,
-        )
-
-        raise RuntimeError(
-            "Gemini did not return valid JSON."
-        ) from exc
-
-    if "candidates" not in result:
-        raise RuntimeError(
-            "Gemini response does not contain "
-            "the 'candidates' field."
-        )
-
-    if not isinstance(
-        result["candidates"],
-        list,
-    ):
-        raise RuntimeError(
-            "Gemini 'candidates' must be a list."
-        )
-
-    return result
-
-
-def validate_candidates(
-    result: dict,
-) -> None:
-    candidates = result["candidates"]
-
-    if len(candidates) > 10:
-        raise RuntimeError(
-            "Gemini returned more than 10 candidates."
-        )
-
-    for index, candidate in enumerate(
-        candidates,
-        start=1,
-    ):
-        required_fields = [
-            "start",
-            "end",
-            "score",
-            "category",
-            "reason",
-            "title",
-            "confidence",
+    if len(candidates) > MAX_CANDIDATES_PER_CHUNK:
+        candidates = candidates[
+            :MAX_CANDIDATES_PER_CHUNK
         ]
 
-        for field in required_fields:
-            if field not in candidate:
-                raise RuntimeError(
-                    f"Candidate #{index} is missing "
-                    f"field '{field}'."
-                )
+    return candidates
 
+
+def validate_candidate(
+    candidate: dict,
+    index: int,
+) -> None:
+    required_fields = [
+        "start",
+        "end",
+        "score",
+        "category",
+        "reason",
+        "title",
+        "confidence",
+    ]
+
+    for field in required_fields:
+        if field not in candidate:
+            raise RuntimeError(
+                f"Candidate #{index} is missing "
+                f"field '{field}'."
+            )
+
+    try:
         start = float(
             candidate["start"]
         )
@@ -428,37 +384,162 @@ def validate_candidates(
             candidate["confidence"]
         )
 
-        if start < 0:
-            raise RuntimeError(
-                f"Candidate #{index} has a negative start."
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise RuntimeError(
+            f"Candidate #{index} contains "
+            f"invalid numeric values."
+        ) from exc
+
+    if start < 0:
+        raise RuntimeError(
+            f"Candidate #{index} has "
+            f"a negative start."
+        )
+
+    if end <= start:
+        raise RuntimeError(
+            f"Candidate #{index} has invalid "
+            f"timestamps: {start} -> {end}."
+        )
+
+    if not 0 <= score <= 100:
+        raise RuntimeError(
+            f"Candidate #{index} has invalid "
+            f"score: {score}."
+        )
+
+    if not 0 <= confidence <= 1:
+        raise RuntimeError(
+            f"Candidate #{index} has invalid "
+            f"confidence: {confidence}."
+        )
+
+
+def validate_candidates(
+    candidates: list[dict],
+) -> None:
+    for index, candidate in enumerate(
+        candidates,
+        start=1,
+    ):
+        validate_candidate(
+            candidate,
+            index,
+        )
+
+
+def normalize_candidates(
+    candidates: list[dict],
+) -> list[dict]:
+    normalized = []
+
+    for candidate in candidates:
+        normalized_candidate = dict(
+            candidate
+        )
+
+        normalized_candidate["start"] = round(
+            float(candidate["start"]),
+            2,
+        )
+
+        normalized_candidate["end"] = round(
+            float(candidate["end"]),
+            2,
+        )
+
+        normalized_candidate["score"] = round(
+            float(candidate["score"]),
+            2,
+        )
+
+        normalized_candidate["confidence"] = round(
+            float(candidate["confidence"]),
+            3,
+        )
+
+        normalized_candidate["duration"] = round(
+            (
+                normalized_candidate["end"]
+                - normalized_candidate["start"]
+            ),
+            2,
+        )
+
+        normalized.append(
+            normalized_candidate
+        )
+
+    return normalized
+
+
+def remove_duplicate_candidates(
+    candidates: list[dict],
+) -> list[dict]:
+    if not candidates:
+        return []
+
+    candidates = sorted(
+        candidates,
+        key=lambda candidate: (
+            candidate["score"],
+            candidate["confidence"],
+        ),
+        reverse=True,
+    )
+
+    selected = []
+
+    for candidate in candidates:
+        duplicate = False
+
+        for existing in selected:
+            start_difference = abs(
+                candidate["start"]
+                - existing["start"]
             )
 
-        if end <= start:
-            raise RuntimeError(
-                f"Candidate #{index} has invalid "
-                f"timestamps: {start} -> {end}."
+            end_difference = abs(
+                candidate["end"]
+                - existing["end"]
             )
 
-        if not 0 <= score <= 100:
-            raise RuntimeError(
-                f"Candidate #{index} has invalid "
-                f"score: {score}."
+            if (
+                start_difference < 10
+                and end_difference < 10
+            ):
+                duplicate = True
+                break
+
+        if not duplicate:
+            selected.append(
+                candidate
             )
 
-        if not 0 <= confidence <= 1:
-            raise RuntimeError(
-                f"Candidate #{index} has invalid "
-                f"confidence: {confidence}."
-            )
+    selected.sort(
+        key=lambda candidate: candidate["score"],
+        reverse=True,
+    )
+
+    return selected
 
 
 def save_result(
-    result: dict,
+    candidates: list[dict],
+    statistics: dict,
 ) -> None:
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
+
+    result = {
+        "statistics": statistics,
+        "candidates": candidates,
+    }
 
     with OUTPUT_FILE.open(
         "w",
@@ -476,61 +557,177 @@ def main() -> int:
     try:
         transcription = load_transcription()
 
-        transcription_text = (
-            build_transcription_text(
-                transcription
-            )
+        segments = build_transcription_segments(
+            transcription
         )
 
-        if not transcription_text.strip():
+        if not segments:
             raise RuntimeError(
-                "The transcription contains no text."
+                "The transcription contains no usable segments."
             )
 
-        print(
-            f"VOD ID: "
-            f"{transcription.get('video', 'unknown')}"
-        )
-
-        print(
-            f"Transcription file: "
-            f"{INPUT_FILE}"
+        chunks = create_chunks(
+            segments
         )
 
         print(
             f"Transcription segments: "
-            f"{len(transcription.get('segments', []))}"
+            f"{len(segments)}"
         )
 
         print(
             f"Transcription characters: "
-            f"{len(transcription_text)}"
+            f"{sum(len(segment['text']) for segment in segments)}"
         )
 
-        result = analyze_transcription(
-            transcription_text
+        print(
+            f"Chunk size: "
+            f"{CHUNK_SIZE} characters"
         )
 
-        validate_candidates(
-            result
+        print(
+            f"Chunks created: "
+            f"{len(chunks)}"
         )
+
+        print(
+            f"Gemini model: "
+            f"{MODEL_NAME}"
+        )
+
+        client = get_gemini_client()
+
+        all_candidates = []
+
+        failed_chunks = []
+
+        for index, chunk in enumerate(
+            chunks,
+            start=1,
+        ):
+            print()
+            print(
+                "========================================="
+            )
+
+            print(
+                f"Processing Gemini chunk "
+                f"{index}/{len(chunks)}"
+            )
+
+            print(
+                f"Chunk characters: "
+                f"{len(chunk)}"
+            )
+
+            print(
+                "========================================="
+            )
+
+            try:
+                candidates = analyze_chunk(
+                    client,
+                    chunk,
+                    index,
+                    len(chunks),
+                )
+
+                validate_candidates(
+                    candidates
+                )
+
+                all_candidates.extend(
+                    candidates
+                )
+
+                print(
+                    f"Candidates found in chunk "
+                    f"{index}: "
+                    f"{len(candidates)}"
+                )
+
+            except Exception as exc:
+                print(
+                    f"ERROR processing chunk "
+                    f"{index}: {exc}",
+                    file=sys.stderr,
+                )
+
+                failed_chunks.append(
+                    index
+                )
+
+            if index < len(chunks):
+                print(
+                    "Waiting before next Gemini request..."
+                )
+
+                time.sleep(3)
+
+        normalized_candidates = (
+            normalize_candidates(
+                all_candidates
+            )
+        )
+
+        deduplicated_candidates = (
+            remove_duplicate_candidates(
+                normalized_candidates
+            )
+        )
+
+        statistics = {
+            "transcription_segments": len(
+                segments
+            ),
+            "chunks": len(chunks),
+            "failed_chunks": failed_chunks,
+            "raw_candidates": len(
+                all_candidates
+            ),
+            "final_candidates": len(
+                deduplicated_candidates
+            ),
+            "model": MODEL_NAME,
+            "chunk_size": CHUNK_SIZE,
+        }
 
         save_result(
-            result
+            deduplicated_candidates,
+            statistics,
         )
 
-        candidates = result[
-            "candidates"
-        ]
-
         print()
+        print(
+            "========================================="
+        )
+
         print(
             "Gemini analysis completed."
         )
 
         print(
-            f"Candidates found: "
-            f"{len(candidates)}"
+            "========================================="
+        )
+
+        print(
+            f"Chunks processed: "
+            f"{len(chunks) - len(failed_chunks)}"
+        )
+
+        print(
+            f"Failed chunks: "
+            f"{len(failed_chunks)}"
+        )
+
+        print(
+            f"Raw candidates: "
+            f"{len(all_candidates)}"
+        )
+
+        print(
+            f"Final candidates: "
+            f"{len(deduplicated_candidates)}"
         )
 
         print(
@@ -540,7 +737,7 @@ def main() -> int:
         print()
 
         for index, candidate in enumerate(
-            candidates,
+            deduplicated_candidates,
             start=1,
         ):
             print(
@@ -555,6 +752,11 @@ def main() -> int:
             print(
                 f"  End: "
                 f"{candidate['end']}"
+            )
+
+            print(
+                f"  Duration: "
+                f"{candidate['duration']}s"
             )
 
             print(
@@ -573,16 +775,25 @@ def main() -> int:
             )
 
             print(
-                f"  Reason: "
-                f"{candidate['reason']}"
-            )
-
-            print(
                 f"  Confidence: "
                 f"{candidate['confidence']}"
             )
 
             print()
+
+        if failed_chunks:
+            print(
+                "WARNING: Some Gemini chunks failed:"
+            )
+
+            print(
+                failed_chunks
+            )
+
+            print(
+                "The available candidates were "
+                "saved successfully."
+            )
 
         return 0
 
