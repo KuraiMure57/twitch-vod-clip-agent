@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,8 +11,15 @@ TELEGRAM_API_URL = "https://api.telegram.org"
 
 MANIFEST_DIR = Path("data/clips")
 APPROVED_DIR = Path("data/telegram_approved")
+TELEGRAM_TEMP_DIR = Path("data/telegram_temp")
 
 TELEGRAM_LONG_POLL_SECONDS = 30
+
+# Dejamos margen respecto al límite de Telegram.
+TELEGRAM_MAX_VIDEO_SIZE_MB = 45
+TELEGRAM_MAX_VIDEO_SIZE_BYTES = (
+    TELEGRAM_MAX_VIDEO_SIZE_MB * 1024 * 1024
+)
 
 
 def get_config() -> tuple[str, str]:
@@ -151,6 +159,292 @@ def build_caption(
     )
 
 
+def get_video_duration(
+    video_file: Path,
+) -> float:
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(video_file),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    duration_text = result.stdout.strip()
+
+    if not duration_text:
+        raise RuntimeError(
+            f"Could not determine video duration: "
+            f"{video_file}"
+        )
+
+    duration = float(duration_text)
+
+    if duration <= 0:
+        raise RuntimeError(
+            f"Invalid video duration: "
+            f"{video_file}"
+        )
+
+    return duration
+
+
+def compress_clip_for_telegram(
+    clip_file: Path,
+) -> Path:
+    TELEGRAM_TEMP_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output_file = (
+        TELEGRAM_TEMP_DIR
+        / f"{clip_file.stem}_telegram.mp4"
+    )
+
+    duration = get_video_duration(
+        clip_file
+    )
+
+    # Objetivo de aproximadamente 42 MB para dejar
+    # margen de seguridad al límite de Telegram.
+    target_size_bytes = (
+        42 * 1024 * 1024
+    )
+
+    target_size_bits = (
+        target_size_bytes * 8
+    )
+
+    # Reservamos bitrate para el audio.
+    audio_bitrate_kbps = 96
+
+    total_bitrate_kbps = (
+        target_size_bits
+        / duration
+        / 1000
+    )
+
+    video_bitrate_kbps = (
+        total_bitrate_kbps
+        - audio_bitrate_kbps
+    )
+
+    # Evitamos bitrates absurdamente bajos.
+    video_bitrate_kbps = max(
+        400,
+        int(video_bitrate_kbps),
+    )
+
+    print()
+    print(
+        "Clip exceeds Telegram upload limit."
+    )
+
+    print(
+        f"  Original: "
+        f"{clip_file.stat().st_size / 1024 / 1024:.2f} MB"
+    )
+
+    print(
+        f"  Duration: "
+        f"{duration:.2f}s"
+    )
+
+    print(
+        f"  Target video bitrate: "
+        f"{video_bitrate_kbps} kbps"
+    )
+
+    print(
+        f"  Output: "
+        f"{output_file}"
+    )
+
+    # Primera compresión:
+    # - H.264
+    # - 720p máximo
+    # - audio AAC
+    # - faststart para reproducción desde Telegram
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(clip_file),
+            "-vf",
+            "scale=w=1280:h=720:force_original_aspect_ratio=decrease,"
+            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-b:v",
+            f"{video_bitrate_kbps}k",
+            "-maxrate",
+            f"{video_bitrate_kbps}k",
+            "-bufsize",
+            f"{video_bitrate_kbps * 2}k",
+            "-c:a",
+            "aac",
+            "-b:a",
+            f"{audio_bitrate_kbps}k",
+            "-movflags",
+            "+faststart",
+            str(output_file),
+        ],
+        check=True,
+    )
+
+    if not output_file.exists():
+        raise RuntimeError(
+            "Telegram compression did not produce "
+            f"an output file: {output_file}"
+        )
+
+    output_size = output_file.stat().st_size
+
+    print(
+        f"  Compressed size: "
+        f"{output_size / 1024 / 1024:.2f} MB"
+    )
+
+    # Si todavía supera el límite, hacemos una segunda
+    # compresión más agresiva.
+    if output_size > TELEGRAM_MAX_VIDEO_SIZE_BYTES:
+        print(
+            "  Compressed file is still too large."
+        )
+
+        second_output = (
+            TELEGRAM_TEMP_DIR
+            / f"{clip_file.stem}_telegram_small.mp4"
+        )
+
+        # Calculamos un bitrate nuevo usando 35 MB
+        # como objetivo para tener bastante margen.
+        second_target_size_bytes = (
+            35 * 1024 * 1024
+        )
+
+        second_target_bits = (
+            second_target_size_bytes * 8
+        )
+
+        second_total_bitrate_kbps = (
+            second_target_bits
+            / duration
+            / 1000
+        )
+
+        second_video_bitrate_kbps = max(
+            300,
+            int(
+                second_total_bitrate_kbps
+                - audio_bitrate_kbps
+            ),
+        )
+
+        print(
+            f"  Second video bitrate: "
+            f"{second_video_bitrate_kbps} kbps"
+        )
+
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(clip_file),
+                "-vf",
+                "scale=w=960:h=540:force_original_aspect_ratio=decrease,"
+                "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-b:v",
+                f"{second_video_bitrate_kbps}k",
+                "-maxrate",
+                f"{second_video_bitrate_kbps}k",
+                "-bufsize",
+                f"{second_video_bitrate_kbps * 2}k",
+                "-c:a",
+                "aac",
+                "-b:a",
+                f"{audio_bitrate_kbps}k",
+                "-movflags",
+                "+faststart",
+                str(second_output),
+            ],
+            check=True,
+        )
+
+        if not second_output.exists():
+            raise RuntimeError(
+                "Second Telegram compression failed."
+            )
+
+        second_size = (
+            second_output.stat().st_size
+        )
+
+        print(
+            f"  Second compressed size: "
+            f"{second_size / 1024 / 1024:.2f} MB"
+        )
+
+        if second_size > TELEGRAM_MAX_VIDEO_SIZE_BYTES:
+            raise RuntimeError(
+                "Unable to compress clip below "
+                f"{TELEGRAM_MAX_VIDEO_SIZE_MB} MB: "
+                f"{clip_file}"
+            )
+
+        return second_output
+
+    return output_file
+
+
+def prepare_clip_for_telegram(
+    clip_file: Path,
+) -> Path:
+    file_size = clip_file.stat().st_size
+
+    file_size_mb = (
+        file_size / 1024 / 1024
+    )
+
+    print(
+        f"  File size: "
+        f"{file_size_mb:.2f} MB"
+    )
+
+    if file_size <= TELEGRAM_MAX_VIDEO_SIZE_BYTES:
+        print(
+            "  Size is within Telegram limit."
+        )
+
+        return clip_file
+
+    print(
+        f"  Size exceeds "
+        f"{TELEGRAM_MAX_VIDEO_SIZE_MB} MB."
+    )
+
+    return compress_clip_for_telegram(
+        clip_file
+    )
+
+
 def send_clip(
     bot_token: str,
     chat_id: str,
@@ -206,7 +500,17 @@ def send_clip(
         f"  Title: {clip['title']}"
     )
 
-    with clip_file.open(
+    telegram_file = prepare_clip_for_telegram(
+        clip_file
+    )
+
+    if telegram_file != clip_file:
+        print(
+            f"  Telegram upload file: "
+            f"{telegram_file}"
+        )
+
+    with telegram_file.open(
         "rb"
     ) as video_file:
         result = telegram_request(
@@ -223,7 +527,7 @@ def send_clip(
             },
             files={
                 "video": (
-                    clip_file.name,
+                    telegram_file.name,
                     video_file,
                     "video/mp4",
                 )
