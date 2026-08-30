@@ -2,15 +2,21 @@ name: Telegram Listener
 
 on:
   schedule:
+    # Comprueba Telegram cada 5 minutos.
     - cron: "*/5 * * * *"
 
+  # Permite ejecutar el listener manualmente desde GitHub.
   workflow_dispatch:
 
 permissions:
+  # Permite consultar y lanzar workflows.
   actions: write
+
+  # Necesario para checkout.
   contents: read
 
 concurrency:
+  # Impide que dos listeners se ejecuten al mismo tiempo.
   group: telegram-listener
   cancel-in-progress: false
 
@@ -19,8 +25,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
+
+      # ============================================================
+      # COMPROBAR SI EL PROYECTO 1 YA ESTÁ EJECUTÁNDOSE
+      # ============================================================
 
       - name: Check VOD pipeline status
         id: pipeline_status
@@ -39,10 +55,14 @@ jobs:
 
           echo "$RESPONSE" > workflow_runs.json
 
-          RUNNING=$(python - <<'PY'
+          python - <<'PY'
           import json
 
-          with open("workflow_runs.json", "r", encoding="utf-8") as file:
+          with open(
+              "workflow_runs.json",
+              "r",
+              encoding="utf-8",
+          ) as file:
               data = json.load(file)
 
           running_states = {
@@ -53,22 +73,43 @@ jobs:
               "pending",
           }
 
-          for run in data.get("workflow_runs", []):
+          running = False
+
+          for run in data.get(
+              "workflow_runs",
+              [],
+          ):
               if run.get("status") in running_states:
-                  print("true")
+                  running = True
                   break
-          else:
-              print("false")
-          PY
+
+          with open(
+              "pipeline_running.txt",
+              "w",
+              encoding="utf-8",
+          ) as file:
+              file.write(
+                  "true" if running else "false"
+              )
+
+          print(
+              f"Pipeline running: {running}"
           )
+          PY
+
+          RUNNING=$(cat pipeline_running.txt)
 
           echo "Pipeline running: $RUNNING"
 
           echo "running=$RUNNING" >> "$GITHUB_OUTPUT"
 
+
+      # ============================================================
+      # LEER TELEGRAM
+      # ============================================================
+
       - name: Get Telegram updates
         id: telegram_updates
-        if: steps.pipeline_status.outputs.running == 'false'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -84,11 +125,15 @@ jobs:
           import urllib.request
 
           bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
-          allowed_chat_id = str(os.environ["TELEGRAM_CHAT_ID"])
+          allowed_chat_id = str(
+              os.environ["TELEGRAM_CHAT_ID"]
+          )
 
           params = {
               "timeout": "5",
-              "allowed_updates": json.dumps(["message"]),
+              "allowed_updates": json.dumps(
+                  ["message"]
+              ),
           }
 
           url = (
@@ -117,37 +162,53 @@ jobs:
               print(data)
               raise SystemExit(1)
 
-          updates = data.get("result", [])
-
-          print(
-              f"Telegram updates received: {len(updates)}"
+          updates = data.get(
+              "result",
+              [],
           )
 
-          start_update = None
+          print(
+              f"Telegram updates received: "
+              f"{len(updates)}"
+          )
 
+          command_update = None
+
+          # Procesamos el último comando válido recibido.
           for update in updates:
               message = update.get("message")
 
               if not message:
                   continue
 
-              chat = message.get("chat", {})
-
-              chat_id = str(
-                  chat.get("id", "")
+              chat = message.get(
+                  "chat",
+                  {},
               )
 
+              chat_id = str(
+                  chat.get(
+                      "id",
+                      "",
+                  )
+              )
+
+              # Solo aceptamos mensajes del chat autorizado.
               if chat_id != allowed_chat_id:
                   continue
 
               text = message.get(
                   "text",
-                  ""
+                  "",
               ).strip()
+
+              update_id = update.get(
+                  "update_id"
+              )
 
               print(
                   f"Authorized Telegram message: "
-                  f"update_id={update.get('update_id')} "
+                  f"update_id={update_id} "
                   f"text={text!r}"
               )
 
@@ -155,74 +216,413 @@ jobs:
                   text == "/start"
                   or text.startswith("/start@")
               ):
-                  start_update = update
+                  command_update = {
+                      "update_id": update_id,
+                      "command": "start",
+                  }
 
-          if start_update is None:
-              print()
-              print("No /start command found.")
+              elif (
+                  text == "/estado"
+                  or text.startswith("/estado@")
+              ):
+                  command_update = {
+                      "update_id": update_id,
+                      "command": "estado",
+                  }
+
+              elif (
+                  text == "/help"
+                  or text.startswith("/help@")
+              ):
+                  command_update = {
+                      "update_id": update_id,
+                      "command": "help",
+                  }
+
+          if command_update is None:
+              print("No supported command found.")
 
               with open(
-                  "telegram_start_update_id.txt",
+                  "telegram_command.json",
                   "w",
                   encoding="utf-8",
               ) as file:
-                  file.write("")
+                  json.dump(
+                      {},
+                      file,
+                  )
 
-              raise SystemExit(0)
-
-          update_id = int(
-              start_update["update_id"]
-          )
+              exit(0)
 
           print()
           print(
               "========================================="
           )
           print(
-              "AUTHORIZED /start DETECTED"
+              "TELEGRAM COMMAND DETECTED"
           )
           print(
               "========================================="
           )
+
           print(
-              f"Telegram update ID: {update_id}"
+              f"Command: "
+              f"{command_update['command']}"
+          )
+
+          print(
+              f"Update ID: "
+              f"{command_update['update_id']}"
           )
 
           with open(
-              "telegram_start_update_id.txt",
+              "telegram_command.json",
               "w",
               encoding="utf-8",
           ) as file:
-              file.write(
-                  str(update_id)
+              json.dump(
+                  command_update,
+                  file,
+                  indent=2,
+              )
+          PY
+
+
+      # ============================================================
+      # /HELP
+      # ============================================================
+
+      - name: Process /help
+        if: steps.telegram_updates.outcome == 'success'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          COMMAND=$(python - <<'PY'
+          import json
+
+          with open(
+              "telegram_command.json",
+              "r",
+              encoding="utf-8",
+          ) as file:
+              data = json.load(file)
+
+          print(
+              data.get(
+                  "command",
+                  "",
+              )
+          )
+          PY
+          )
+
+          if [ "$COMMAND" != "help" ]; then
+            exit 0
+          fi
+
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          text = (
+              "📖 Comandos disponibles:\n\n"
+              "/start → Inicia un nuevo procesamiento.\n"
+              "/estado → Consulta el estado del procesamiento.\n"
+              "/help → Muestra los comandos disponibles."
+          )
+
+          params = urllib.parse.urlencode(
+              {
+                  "chat_id": chat_id,
+                  "text": text,
+              }
+          )
+
+          url = (
+              f"https://api.telegram.org/bot{bot_token}/sendMessage?"
+              f"{params}"
+          )
+
+          with urllib.request.urlopen(
+              url,
+              timeout=15,
+          ) as response:
+              data = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          if not data.get("ok"):
+              raise RuntimeError(data)
+
+          print("Help message sent.")
+          PY
+
+
+      # ============================================================
+      # /ESTADO
+      # ============================================================
+
+      - name: Process /estado
+        if: steps.telegram_updates.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          COMMAND=$(python - <<'PY'
+          import json
+
+          with open(
+              "telegram_command.json",
+              "r",
+              encoding="utf-8",
+          ) as file:
+              data = json.load(file)
+
+          print(
+              data.get(
+                  "command",
+                  "",
+              )
+          )
+          PY
+          )
+
+          if [ "$COMMAND" != "estado" ]; then
+            exit 0
+          fi
+
+          echo "========================================="
+          echo "Checking latest VOD pipeline"
+          echo "========================================="
+
+          RESPONSE=$(curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?per_page=1")
+
+          echo "$RESPONSE" > latest_run.json
+
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          with open(
+              "latest_run.json",
+              "r",
+              encoding="utf-8",
+          ) as file:
+              data = json.load(file)
+
+          runs = data.get(
+              "workflow_runs",
+              [],
+          )
+
+          if not runs:
+              status_text = (
+                  "⚪ Sin proceso en curso."
+              )
+
+          else:
+              run = runs[0]
+
+              status = run.get(
+                  "status"
+              )
+
+              conclusion = run.get(
+                  "conclusion"
+              )
+
+              if status in {
+                  "queued",
+                  "in_progress",
+                  "waiting",
+                  "requested",
+                  "pending",
+              }:
+                  status_text = (
+                      "🟢 Procesando.\n\n"
+                      "El Proyecto 1 está "
+                      "trabajando en el último VOD."
+                  )
+
+              elif conclusion == "success":
+                  status_text = (
+                      "⚪ Sin proceso en curso.\n\n"
+                      "El último procesamiento "
+                      "terminó correctamente."
+                  )
+
+              elif conclusion == "failure":
+                  status_text = (
+                      "❌ Fallo.\n\n"
+                      "El último procesamiento "
+                      "ha terminado con errores."
+                  )
+
+              elif conclusion == "cancelled":
+                  status_text = (
+                      "❌ Procesamiento cancelado.\n\n"
+                      "El último procesamiento "
+                      "fue cancelado."
+                  )
+
+              else:
+                  status_text = (
+                      "⚪ Sin proceso en curso."
+                  )
+
+          bot_token = os.environ[
+              "TELEGRAM_BOT_TOKEN"
+          ]
+
+          chat_id = os.environ[
+              "TELEGRAM_CHAT_ID"
+          ]
+
+          params = urllib.parse.urlencode(
+              {
+                  "chat_id": chat_id,
+                  "text": status_text,
+              }
+          )
+
+          url = (
+              f"https://api.telegram.org/bot{bot_token}/sendMessage?"
+              f"{params}"
+          )
+
+          with urllib.request.urlopen(
+              url,
+              timeout=15,
+          ) as response:
+              telegram_result = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          if not telegram_result.get("ok"):
+              raise RuntimeError(
+                  telegram_result
               )
 
           print(
-              "The /start command will be acknowledged "
-              "after GitHub accepts the pipeline."
+              "Status sent to Telegram."
           )
           PY
+
+
+      # ============================================================
+      # COMPROBAR /START
+      # ============================================================
+
+      - name: Check /start command
+        id: start_check
+        if: steps.telegram_updates.outcome == 'success'
+        run: |
+          COMMAND=$(python - <<'PY'
+          import json
+
+          with open(
+              "telegram_command.json",
+              "r",
+              encoding="utf-8",
+          ) as file:
+              data = json.load(file)
+
+          print(
+              data.get(
+                  "command",
+                  "",
+              )
+          )
+          PY
+          )
+
+          if [ "$COMMAND" = "start" ]; then
+            echo "start=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "start=false" >> "$GITHUB_OUTPUT"
+          fi
+
+
+      # ============================================================
+      # SI YA ESTÁ PROCESANDO
+      # ============================================================
+
+      - name: Inform that pipeline is already running
+        if: |
+          steps.start_check.outputs.start == 'true' &&
+          steps.pipeline_status.outputs.running == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          text = (
+              "🟢 El Proyecto 1 ya está procesando un VOD.\n\n"
+              "No se ha iniciado otro proceso."
+          )
+
+          params = urllib.parse.urlencode(
+              {
+                  "chat_id": chat_id,
+                  "text": text,
+              }
+          )
+
+          url = (
+              f"https://api.telegram.org/bot{bot_token}/sendMessage?"
+              f"{params}"
+          )
+
+          with urllib.request.urlopen(
+              url,
+              timeout=15,
+          ) as response:
+              data = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          if not data.get("ok"):
+              raise RuntimeError(data)
+
+          print(
+              "Already-running message sent."
+          )
+          PY
+
+
+      # ============================================================
+      # LANZAR PROYECTO 1
+      # ============================================================
 
       - name: Launch VOD pipeline
         id: launch_pipeline
         if: |
-          steps.pipeline_status.outputs.running == 'false' &&
-          steps.telegram_updates.outcome == 'success'
+          steps.start_check.outputs.start == 'true' &&
+          steps.pipeline_status.outputs.running == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ ! -f telegram_start_update_id.txt ]; then
-            echo "No Telegram update information found."
-            exit 0
-          fi
-
-          UPDATE_ID=$(cat telegram_start_update_id.txt)
-
-          if [ -z "$UPDATE_ID" ]; then
-            echo "No /start command to process."
-            exit 0
-          fi
-
           echo "========================================="
           echo "Launching VOD pipeline"
           echo "========================================="
@@ -247,93 +647,21 @@ jobs:
             exit 1
           fi
 
-          echo
           echo "VOD pipeline successfully launched."
+
           echo "launched=true" >> "$GITHUB_OUTPUT"
 
-      - name: Acknowledge Telegram update
-        if: steps.launch_pipeline.outputs.launched == 'true'
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: |
-          if [ ! -f telegram_start_update_id.txt ]; then
-            echo "No Telegram update ID found."
-            exit 0
-          fi
 
-          UPDATE_ID=$(cat telegram_start_update_id.txt)
+      # ============================================================
+      # CONFIRMACIÓN DE /START
+      # ============================================================
 
-          if [ -z "$UPDATE_ID" ]; then
-            echo "No Telegram update ID to acknowledge."
-            exit 0
-          fi
-
-          OFFSET=$((UPDATE_ID + 1))
-
-          echo "========================================="
-          echo "Acknowledging Telegram update"
-          echo "========================================="
-
-          echo "Processed update ID: $UPDATE_ID"
-          echo "New Telegram offset: $OFFSET"
-
-          python - <<'PY'
-          import json
-          import os
-          import urllib.parse
-          import urllib.request
-
-          bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
-          offset = os.environ["TELEGRAM_OFFSET"]
-
-          params = {
-              "offset": offset,
-              "allowed_updates": json.dumps(["message"]),
-          }
-
-          url = (
-              f"https://api.telegram.org/bot{bot_token}/getUpdates?"
-              + urllib.parse.urlencode(params)
-          )
-
-          try:
-              with urllib.request.urlopen(
-                  url,
-                  timeout=15,
-              ) as response:
-                  data = json.loads(
-                      response.read().decode("utf-8")
-                  )
-          except Exception as exc:
-              print(
-                  f"ERROR: Could not acknowledge Telegram update: "
-                  f"{exc}"
-              )
-              raise SystemExit(1)
-
-          if not data.get("ok"):
-              print(
-                  "ERROR: Telegram returned an error while "
-                  "acknowledging the update."
-              )
-              print(data)
-              raise SystemExit(1)
-
-          print(
-              "Telegram update acknowledged successfully."
-          )
-          PY
-
-      - name: Send launch confirmation
+      - name: Send start confirmation
         if: steps.launch_pipeline.outputs.launched == 'true'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          echo "========================================="
-          echo "Sending Telegram confirmation"
-          echo "========================================="
-
           python - <<'PY'
           import json
           import os
@@ -348,7 +676,8 @@ jobs:
               "He recibido tu /start y he iniciado "
               "el procesamiento del último VOD.\n\n"
               "Cuando los clips estén listos, "
-              "te los enviaré aquí para aprobarlos o rechazarlos."
+              "te los enviaré aquí para aprobarlos "
+              "o rechazarlos."
           )
 
           params = urllib.parse.urlencode(
@@ -363,32 +692,118 @@ jobs:
               f"{params}"
           )
 
-          try:
-              with urllib.request.urlopen(
-                  url,
-                  timeout=15,
-              ) as response:
-                  data = json.loads(
-                      response.read().decode("utf-8")
-                  )
-          except Exception as exc:
-              print(
-                  f"ERROR: Could not send Telegram confirmation: "
-                  f"{exc}"
+          with urllib.request.urlopen(
+              url,
+              timeout=15,
+          ) as response:
+              data = json.loads(
+                  response.read().decode("utf-8")
               )
-              raise SystemExit(1)
 
           if not data.get("ok"):
-              print(
-                  "ERROR: Telegram returned an error."
-              )
-              print(data)
-              raise SystemExit(1)
+              raise RuntimeError(data)
 
           print(
-              "Telegram confirmation sent successfully."
+              "Start confirmation sent."
           )
           PY
+
+
+      # ============================================================
+      # RECONOCER EL MENSAJE EN TELEGRAM
+      #
+      # Telegram no vuelve a entregar el update una vez que
+      # getUpdates recibe un offset superior al update_id.
+      # ============================================================
+
+      - name: Acknowledge Telegram update
+        if: |
+          steps.telegram_updates.outcome == 'success' &&
+          hashFiles('telegram_command.json') != ''
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          UPDATE_ID=$(python - <<'PY'
+          import json
+
+          with open(
+              "telegram_command.json",
+              "r",
+              encoding="utf-8",
+          ) as file:
+              data = json.load(file)
+
+          value = data.get(
+              "update_id"
+          )
+
+          if value is not None:
+              print(value)
+          PY
+          )
+
+          if [ -z "$UPDATE_ID" ]; then
+            echo "No update ID to acknowledge."
+            exit 0
+          fi
+
+          OFFSET=$((UPDATE_ID + 1))
+
+          echo "========================================="
+          echo "Acknowledging Telegram update"
+          echo "========================================="
+
+          echo "Update ID: $UPDATE_ID"
+          echo "Offset: $OFFSET"
+
+          export TELEGRAM_OFFSET="$OFFSET"
+
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          bot_token = os.environ[
+              "TELEGRAM_BOT_TOKEN"
+          ]
+
+          offset = os.environ[
+              "TELEGRAM_OFFSET"
+          ]
+
+          params = {
+              "offset": offset,
+              "allowed_updates": json.dumps(
+                  ["message"]
+              ),
+          }
+
+          url = (
+              f"https://api.telegram.org/bot{bot_token}/getUpdates?"
+              + urllib.parse.urlencode(params)
+          )
+
+          with urllib.request.urlopen(
+              url,
+              timeout=15,
+          ) as response:
+              data = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          if not data.get("ok"):
+              raise RuntimeError(data)
+
+          print(
+              "Telegram update acknowledged."
+          )
+          PY
+
+
+      # ============================================================
+      # RESUMEN
+      # ============================================================
 
       - name: Listener summary
         run: |
@@ -401,7 +816,7 @@ jobs:
           elif [ "${{ steps.pipeline_status.outputs.running }}" = "true" ]; then
             echo "Result: VOD pipeline already running."
           else
-            echo "Result: No /start command found."
+            echo "Result: Telegram command processed."
           fi
 
           echo "========================================="
