@@ -420,6 +420,13 @@ jobs:
           path: data/telegram_approved/${{ env.VOD_ID }}_approved.json
           if-no-files-found: error
 
+      # ============================================================
+      # FINALIZACIÓN CORRECTA
+      #
+      # Este paso se ejecuta únicamente cuando todos los pasos
+      # anteriores han terminado correctamente.
+      # ============================================================
+
       - name: Complete VOD pipeline test completed
         run: |
           echo "========================================="
@@ -442,3 +449,139 @@ jobs:
           echo "Telegram configuration: OK"
           echo "Telegram approval: OK"
           echo "========================================="
+
+      # ============================================================
+      # AVISO DE FINALIZACIÓN EN TELEGRAM
+      #
+      # Se envía cuando el pipeline completo ha terminado bien.
+      # ============================================================
+
+      - name: Send successful completion message to Telegram
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          echo "========================================="
+          echo "Sending Telegram completion message"
+          echo "========================================="
+
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          text = (
+              "🎬 Todos los clips han sido enviados.\n\n"
+              "Ya puedes revisarlos en Telegram.\n\n"
+              "Comandos disponibles:\n"
+              "/start → Inicia un nuevo procesamiento.\n"
+              "/estado → Consulta el estado del procesamiento.\n"
+              "/help → Muestra los comandos disponibles."
+          )
+
+          params = urllib.parse.urlencode(
+              {
+                  "chat_id": chat_id,
+                  "text": text,
+              }
+          )
+
+          url = (
+              f"https://api.telegram.org/bot{bot_token}/sendMessage?"
+              f"{params}"
+          )
+
+          with urllib.request.urlopen(
+              url,
+              timeout=15,
+          ) as response:
+              data = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          if not data.get("ok"):
+              raise RuntimeError(data)
+
+          print(
+              "Telegram completion message sent."
+          )
+          PY
+
+      # ============================================================
+      # AVISO AUTOMÁTICO DE FALLO
+      #
+      # Si cualquier paso anterior falla, GitHub ejecutará este paso.
+      # Así recibes el aviso directamente en Telegram sin tener que
+      # consultar /estado.
+      # ============================================================
+
+      - name: Send failure message to Telegram
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          echo "========================================="
+          echo "VOD pipeline failed"
+          echo "========================================="
+
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          text = (
+              "❌ El procesamiento ha fallado.\n\n"
+              "El Proyecto 1 no ha podido completar "
+              "el procesamiento del VOD.\n\n"
+              "Revisa GitHub Actions para ver "
+              "el paso que ha producido el error."
+          )
+
+          params = urllib.parse.urlencode(
+              {
+                  "chat_id": chat_id,
+                  "text": text,
+              }
+          )
+
+          url = (
+              f"https://api.telegram.org/bot{bot_token}/sendMessage?"
+              f"{params}"
+          )
+
+          try:
+              with urllib.request.urlopen(
+                  url,
+                  timeout=15,
+              ) as response:
+                  data = json.loads(
+                      response.read().decode("utf-8")
+                  )
+          except Exception as exc:
+              print(
+                  "ERROR: Could not send Telegram "
+                  f"failure message: {exc}"
+              )
+              raise SystemExit(1)
+
+          if not data.get("ok"):
+              print(
+                  "ERROR: Telegram returned an error."
+              )
+              print(data)
+              raise SystemExit(1)
+
+          print(
+              "Telegram failure message sent."
+          )
+          PY
