@@ -22,71 +22,53 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check for running VOD pipeline
-        id: check_pipeline
+      - name: Check VOD pipeline status
+        id: pipeline_status
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "========================================="
-          echo "Checking running VOD pipelines"
+          echo "Checking VOD pipeline status"
           echo "========================================="
 
-          QUEUED_RUNS=$(curl -s \
+          RESPONSE=$(curl -s \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?status=queued&per_page=20")
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?per_page=20")
 
-          IN_PROGRESS_RUNS=$(curl -s \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?status=in_progress&per_page=20")
+          echo "$RESPONSE" > workflow_runs.json
 
-          RUN_COUNT=$(python - <<'PY'
+          RUNNING=$(python - <<'PY'
           import json
-          import os
 
-          queued_raw = os.environ["QUEUED_RUNS"]
-          in_progress_raw = os.environ["IN_PROGRESS_RUNS"]
+          with open("workflow_runs.json", "r", encoding="utf-8") as file:
+              data = json.load(file)
 
-          queued = json.loads(queued_raw)
-          in_progress = json.loads(in_progress_raw)
-
-          current_run_id = int(os.environ["GITHUB_RUN_ID"])
-
-          runs = []
-
-          for data in (queued, in_progress):
-              for run in data.get("workflow_runs", []):
-                  if run.get("id") != current_run_id:
-                      runs.append(run)
-
-          unique_ids = {
-              run.get("id")
-              for run in runs
-              if run.get("id") is not None
+          running_states = {
+              "queued",
+              "in_progress",
+              "waiting",
+              "requested",
+              "pending",
           }
 
-          print(len(unique_ids))
+          for run in data.get("workflow_runs", []):
+              if run.get("status") in running_states:
+                  print("true")
+                  break
+          else:
+              print("false")
           PY
           )
 
-          echo "Running/queued pipeline count: $RUN_COUNT"
+          echo "Pipeline running: $RUNNING"
 
-          if [ "$RUN_COUNT" -gt 0 ]; then
-            echo "A VOD pipeline is already running or queued."
-            echo "Telegram messages will NOT be consumed."
-            echo "running=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "No VOD pipeline is currently running."
-            echo "running=false" >> "$GITHUB_OUTPUT"
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-          QUEUED_RUNS: ""
-          IN_PROGRESS_RUNS: ""
+          echo "running=$RUNNING" >> "$GITHUB_OUTPUT"
 
       - name: Get Telegram updates
-        if: steps.check_pipeline.outputs.running == 'false'
+        id: telegram_updates
+        if: steps.pipeline_status.outputs.running == 'false'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -138,8 +120,7 @@ jobs:
           updates = data.get("result", [])
 
           print(
-              f"Telegram updates received: "
-              f"{len(updates)}"
+              f"Telegram updates received: {len(updates)}"
           )
 
           start_update = None
@@ -151,6 +132,7 @@ jobs:
                   continue
 
               chat = message.get("chat", {})
+
               chat_id = str(
                   chat.get("id", "")
               )
@@ -176,7 +158,16 @@ jobs:
                   start_update = update
 
           if start_update is None:
+              print()
               print("No /start command found.")
+
+              with open(
+                  "telegram_start_update_id.txt",
+                  "w",
+                  encoding="utf-8",
+              ) as file:
+                  file.write("")
+
               raise SystemExit(0)
 
           update_id = int(
@@ -197,20 +188,6 @@ jobs:
               f"Telegram update ID: {update_id}"
           )
 
-          output_file = "telegram_start_update.json"
-
-          with open(
-              output_file,
-              "w",
-              encoding="utf-8",
-          ) as file:
-              json.dump(
-                  start_update,
-                  file,
-                  indent=2,
-                  ensure_ascii=False,
-              )
-
           with open(
               "telegram_start_update_id.txt",
               "w",
@@ -221,22 +198,27 @@ jobs:
               )
 
           print(
-              f"Saved: {output_file}"
-          )
-
-          print(
-              "The /start will be acknowledged "
-              "after the VOD workflow is successfully launched."
+              "The /start command will be acknowledged "
+              "after GitHub accepts the pipeline."
           )
           PY
 
       - name: Launch VOD pipeline
         id: launch_pipeline
-        if: steps.check_pipeline.outputs.running == 'false'
+        if: |
+          steps.pipeline_status.outputs.running == 'false' &&
+          steps.telegram_updates.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ ! -f telegram_start_update.json ]; then
+          if [ ! -f telegram_start_update_id.txt ]; then
+            echo "No Telegram update information found."
+            exit 0
+          fi
+
+          UPDATE_ID=$(cat telegram_start_update_id.txt)
+
+          if [ -z "$UPDATE_ID" ]; then
             echo "No /start command to process."
             exit 0
           fi
@@ -265,10 +247,11 @@ jobs:
             exit 1
           fi
 
+          echo
           echo "VOD pipeline successfully launched."
           echo "launched=true" >> "$GITHUB_OUTPUT"
 
-      - name: Acknowledge processed Telegram update
+      - name: Acknowledge Telegram update
         if: steps.launch_pipeline.outputs.launched == 'true'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -280,11 +263,19 @@ jobs:
 
           UPDATE_ID=$(cat telegram_start_update_id.txt)
 
+          if [ -z "$UPDATE_ID" ]; then
+            echo "No Telegram update ID to acknowledge."
+            exit 0
+          fi
+
+          OFFSET=$((UPDATE_ID + 1))
+
           echo "========================================="
           echo "Acknowledging Telegram update"
           echo "========================================="
 
-          OFFSET=$((UPDATE_ID + 1))
+          echo "Processed update ID: $UPDATE_ID"
+          echo "New Telegram offset: $OFFSET"
 
           python - <<'PY'
           import json
@@ -295,17 +286,80 @@ jobs:
           bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
           offset = os.environ["TELEGRAM_OFFSET"]
 
+          params = {
+              "offset": offset,
+              "allowed_updates": json.dumps(["message"]),
+          }
+
+          url = (
+              f"https://api.telegram.org/bot{bot_token}/getUpdates?"
+              + urllib.parse.urlencode(params)
+          )
+
+          try:
+              with urllib.request.urlopen(
+                  url,
+                  timeout=15,
+              ) as response:
+                  data = json.loads(
+                      response.read().decode("utf-8")
+                  )
+          except Exception as exc:
+              print(
+                  f"ERROR: Could not acknowledge Telegram update: "
+                  f"{exc}"
+              )
+              raise SystemExit(1)
+
+          if not data.get("ok"):
+              print(
+                  "ERROR: Telegram returned an error while "
+                  "acknowledging the update."
+              )
+              print(data)
+              raise SystemExit(1)
+
+          print(
+              "Telegram update acknowledged successfully."
+          )
+          PY
+
+      - name: Send launch confirmation
+        if: steps.launch_pipeline.outputs.launched == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          echo "========================================="
+          echo "Sending Telegram confirmation"
+          echo "========================================="
+
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          text = (
+              "🚀 Procesamiento iniciado.\n\n"
+              "He recibido tu /start y he iniciado "
+              "el procesamiento del último VOD.\n\n"
+              "Cuando los clips estén listos, "
+              "te los enviaré aquí para aprobarlos o rechazarlos."
+          )
+
           params = urllib.parse.urlencode(
               {
-                  "offset": offset,
-                  "allowed_updates": json.dumps(
-                      ["message"]
-                  ),
+                  "chat_id": chat_id,
+                  "text": text,
               }
           )
 
           url = (
-              f"https://api.telegram.org/bot{bot_token}/getUpdates?"
+              f"https://api.telegram.org/bot{bot_token}/sendMessage?"
               f"{params}"
           )
 
@@ -319,83 +373,20 @@ jobs:
                   )
           except Exception as exc:
               print(
-                  f"ERROR: Could not acknowledge "
-                  f"Telegram update: {exc}"
+                  f"ERROR: Could not send Telegram confirmation: "
+                  f"{exc}"
               )
               raise SystemExit(1)
 
           if not data.get("ok"):
               print(
-                  "ERROR: Telegram returned an error "
-                  "while acknowledging the update."
+                  "ERROR: Telegram returned an error."
               )
               print(data)
               raise SystemExit(1)
 
           print(
-              f"Telegram updates acknowledged "
-              f"through offset {offset}."
-          )
-          PY
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_OFFSET: ${{ steps.telegram_offset.outputs.offset }}
-
-      - name: Confirm launch in Telegram
-        if: steps.launch_pipeline.outputs.launched == 'true'
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import urllib.parse
-          import urllib.request
-
-          bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
-          chat_id = os.environ["TELEGRAM_CHAT_ID"]
-
-          text = (
-              "🚀 He recibido tu /start.\n\n"
-              "He iniciado el procesamiento de tu último VOD.\n\n"
-              "Te enviaré los clips por aquí cuando estén "
-              "listos para revisar."
-          )
-
-          params = urllib.parse.urlencode(
-              {
-                  "chat_id": chat_id,
-                  "text": text,
-              }
-          )
-
-          url = (
-              f"https://api.telegram.org/bot{bot_token}/sendMessage"
-              f"?{params}"
-          )
-
-          try:
-              with urllib.request.urlopen(
-                  url,
-                  timeout=15,
-              ) as response:
-                  data = json.loads(
-                      response.read().decode("utf-8")
-                  )
-          except Exception as exc:
-              print(
-                  f"ERROR: Could not send Telegram "
-                  f"confirmation: {exc}"
-              )
-              raise SystemExit(1)
-
-          if not data.get("ok"):
-              print(data)
-              raise SystemExit(1)
-
-          print(
-              "Telegram confirmation sent."
+              "Telegram confirmation sent successfully."
           )
           PY
 
@@ -403,4 +394,14 @@ jobs:
         run: |
           echo "========================================="
           echo "Telegram listener completed."
+          echo "========================================="
+
+          if [ "${{ steps.launch_pipeline.outputs.launched }}" = "true" ]; then
+            echo "Result: VOD pipeline launched."
+          elif [ "${{ steps.pipeline_status.outputs.running }}" = "true" ]; then
+            echo "Result: VOD pipeline already running."
+          else
+            echo "Result: No /start command found."
+          fi
+
           echo "========================================="
