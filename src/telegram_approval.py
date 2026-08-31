@@ -269,11 +269,6 @@ def compress_clip_for_telegram(
         f"{output_file}"
     )
 
-    # Primera compresión:
-    # - H.264
-    # - 720p máximo
-    # - audio AAC
-    # - faststart para reproducción desde Telegram
     subprocess.run(
         [
             "ffmpeg",
@@ -317,8 +312,6 @@ def compress_clip_for_telegram(
         f"{output_size / 1024 / 1024:.2f} MB"
     )
 
-    # Si todavía supera el límite, hacemos una segunda
-    # compresión más agresiva.
     if output_size > TELEGRAM_MAX_VIDEO_SIZE_BYTES:
         print(
             "  Compressed file is still too large."
@@ -329,8 +322,6 @@ def compress_clip_for_telegram(
             / f"{clip_file.stem}_telegram_small.mp4"
         )
 
-        # Calculamos un bitrate nuevo usando 35 MB
-        # como objetivo para tener bastante margen.
         second_target_size_bytes = (
             35 * 1024 * 1024
         )
@@ -707,21 +698,46 @@ def poll_for_approvals(
             f"Pending clips: {len(pending)}"
         )
 
-        response = requests.get(
-            url,
-            params=params,
-            timeout=TELEGRAM_LONG_POLL_SECONDS + 10,
-        )
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                timeout=TELEGRAM_LONG_POLL_SECONDS + 10,
+            )
 
-        response.raise_for_status()
+            response.raise_for_status()
 
-        result = response.json()
+            result = response.json()
+
+        except requests.RequestException as exc:
+            print(
+                "Telegram polling error. "
+                "Retrying instead of stopping the workflow:"
+            )
+            print(
+                f"  {exc}"
+            )
+            continue
+
+        except ValueError as exc:
+            print(
+                "Telegram returned invalid JSON. "
+                "Retrying instead of stopping the workflow:"
+            )
+            print(
+                f"  {exc}"
+            )
+            continue
 
         if not result.get("ok"):
-            raise RuntimeError(
-                f"Telegram getUpdates error: "
-                f"{result}"
+            print(
+                "Telegram getUpdates returned an error. "
+                "Retrying instead of stopping the workflow:"
             )
+            print(
+                f"  {result}"
+            )
+            continue
 
         updates = result.get(
             "result",
@@ -791,8 +807,14 @@ def poll_for_approvals(
                 continue
 
             if clip_index not in pending:
+                print(
+                    f"Ignoring callback for "
+                    f"already processed clip #{clip_index}."
+                )
                 continue
 
+            # Sacamos el clip de pending inmediatamente.
+            # Esto evita procesar dos veces el mismo botón.
             item = pending.pop(
                 clip_index
             )
@@ -805,25 +827,17 @@ def poll_for_approvals(
 
             if action == "approve":
                 item["status"] = "approved"
+                approved.append(item)
 
-                approved.append(
-                    item
-                )
-
-                answer_callback(
-                    bot_token,
-                    callback["id"],
-                    "✅ Clip aprobado.",
-                )
-
-                update_message(
-                    bot_token,
-                    chat_id,
-                    message_id,
+                decision_text = (
                     "🎬 CLIP DE TWITCH\n\n"
                     "✅ APROBADO\n\n"
                     "Este clip pasará al "
-                    "siguiente paso.",
+                    "siguiente paso."
+                )
+
+                callback_text = (
+                    "✅ Clip aprobado."
                 )
 
                 print(
@@ -833,23 +847,15 @@ def poll_for_approvals(
 
             else:
                 item["status"] = "rejected"
+                rejected.append(item)
 
-                rejected.append(
-                    item
-                )
-
-                answer_callback(
-                    bot_token,
-                    callback["id"],
-                    "❌ Clip rechazado.",
-                )
-
-                update_message(
-                    bot_token,
-                    chat_id,
-                    message_id,
+                decision_text = (
                     "🎬 CLIP DE TWITCH\n\n"
-                    "❌ RECHAZADO",
+                    "❌ RECHAZADO"
+                )
+
+                callback_text = (
+                    "❌ Clip rechazado."
                 )
 
                 print(
@@ -857,15 +863,71 @@ def poll_for_approvals(
                     "REJECTED"
                 )
 
+            # Guardamos SIEMPRE la decisión antes de
+            # hacer cualquier otra operación de Telegram.
             state["approved"] = approved
             state["rejected"] = rejected
             state["pending"] = list(
                 pending.values()
             )
 
-            save_pending_state(
-                state
-            )
+            try:
+                save_pending_state(
+                    state
+                )
+
+                print(
+                    f"  Decision for clip "
+                    f"#{clip_index} saved."
+                )
+
+            except Exception as exc:
+                # La decisión ya está en memoria y
+                # continuamos procesando las demás.
+                print(
+                    "WARNING: Could not save "
+                    "Telegram approval state:"
+                )
+                print(
+                    f"  {exc}"
+                )
+
+            # Confirmamos el botón de Telegram.
+            # Si falla, NO detenemos el workflow.
+            try:
+                answer_callback(
+                    bot_token,
+                    callback["id"],
+                    callback_text,
+                )
+
+            except Exception as exc:
+                print(
+                    f"WARNING: Could not answer "
+                    f"callback for clip #{clip_index}:"
+                )
+                print(
+                    f"  {exc}"
+                )
+
+            # Actualizamos el mensaje.
+            # Si falla, NO detenemos el workflow.
+            try:
+                update_message(
+                    bot_token,
+                    chat_id,
+                    message_id,
+                    decision_text,
+                )
+
+            except Exception as exc:
+                print(
+                    f"WARNING: Could not update "
+                    f"Telegram message for clip #{clip_index}:"
+                )
+                print(
+                    f"  {exc}"
+                )
 
         if not pending:
             print()
@@ -882,6 +944,20 @@ def poll_for_approvals(
     state["completed"] = (
         len(state["pending"]) == 0
     )
+
+    # Guardado final.
+    try:
+        save_pending_state(
+            state
+        )
+    except Exception as exc:
+        print(
+            "WARNING: Final Telegram state "
+            "could not be saved:"
+        )
+        print(
+            f"  {exc}"
+        )
 
     return state
 
