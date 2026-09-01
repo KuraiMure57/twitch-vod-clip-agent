@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -20,6 +21,11 @@ TELEGRAM_MAX_VIDEO_SIZE_MB = 45
 TELEGRAM_MAX_VIDEO_SIZE_BYTES = (
     TELEGRAM_MAX_VIDEO_SIZE_MB * 1024 * 1024
 )
+
+# Reintentos de subida ante errores temporales de red.
+# No existe límite de intentos.
+TELEGRAM_UPLOAD_RETRY_INITIAL_SECONDS = 5
+TELEGRAM_UPLOAD_RETRY_MAX_SECONDS = 60
 
 
 def get_config() -> tuple[str, str]:
@@ -501,50 +507,98 @@ def send_clip(
             f"{telegram_file}"
         )
 
-    with telegram_file.open(
-        "rb"
-    ) as video_file:
-        result = telegram_request(
-            bot_token,
-            "sendVideo",
-            payload={
-                "chat_id": chat_id,
-                "caption": caption,
-                "supports_streaming": "true",
-                "reply_markup": json.dumps(
-                    keyboard,
-                    ensure_ascii=False,
-                ),
-            },
-            files={
-                "video": (
-                    telegram_file.name,
-                    video_file,
-                    "video/mp4",
+    retry_delay = (
+        TELEGRAM_UPLOAD_RETRY_INITIAL_SECONDS
+    )
+
+    attempt = 0
+
+    while True:
+        attempt += 1
+
+        print()
+        print(
+            f"  Telegram upload attempt #{attempt}"
+        )
+
+        try:
+            # El archivo debe abrirse de nuevo en cada intento.
+            # Si una subida se corta, no reutilizamos el
+            # file object anterior.
+            with telegram_file.open(
+                "rb"
+            ) as video_file:
+                result = telegram_request(
+                    bot_token,
+                    "sendVideo",
+                    payload={
+                        "chat_id": chat_id,
+                        "caption": caption,
+                        "supports_streaming": "true",
+                        "reply_markup": json.dumps(
+                            keyboard,
+                            ensure_ascii=False,
+                        ),
+                    },
+                    files={
+                        "video": (
+                            telegram_file.name,
+                            video_file,
+                            "video/mp4",
+                        )
+                    },
                 )
-            },
-        )
 
-    message = result.get(
-        "result",
-        {},
-    )
+            message = result.get(
+                "result",
+                {},
+            )
 
-    message_id = message.get(
-        "message_id"
-    )
+            message_id = message.get(
+                "message_id"
+            )
 
-    if not message_id:
-        raise RuntimeError(
-            "Telegram did not return a message_id."
-        )
+            if not message_id:
+                raise RuntimeError(
+                    "Telegram did not return a message_id."
+                )
 
-    print(
-        f"  Telegram message ID: "
-        f"{message_id}"
-    )
+            print(
+                f"  Telegram message ID: "
+                f"{message_id}"
+            )
 
-    return int(message_id)
+            return int(message_id)
+
+        except (
+            requests.Timeout,
+            requests.ConnectionError,
+            TimeoutError,
+            ConnectionResetError,
+            ConnectionAbortedError,
+        ) as exc:
+            print()
+            print(
+                "  Telegram upload connection error."
+            )
+
+            print(
+                f"  Error: {exc}"
+            )
+
+            print(
+                f"  Retrying in "
+                f"{retry_delay} seconds..."
+            )
+
+            time.sleep(
+                retry_delay
+            )
+
+            retry_delay = min(
+                retry_delay * 2,
+                TELEGRAM_UPLOAD_RETRY_MAX_SECONDS,
+            )
 
 
 def send_all_clips(
@@ -1128,3 +1182,9 @@ if __name__ == "__main__":
     raise SystemExit(
         main()
     )
+```
+
+**Commit message:**
+
+```text
+Retry Telegram uploads indefinitely on connection errors
