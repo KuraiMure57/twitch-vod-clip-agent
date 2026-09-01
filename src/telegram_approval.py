@@ -1182,9 +1182,3 @@ if __name__ == "__main__":
     raise SystemExit(
         main()
     )
-```
-
-**Commit message:**
-
-```text
-Retry Telegram uploads indefinitely on connection errors
