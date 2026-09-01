@@ -615,6 +615,28 @@ def send_all_clips(
         [],
     )
 
+    # =====================================================
+    # AVISO INICIAL ANTES DE ENVIAR EL PRIMER CLIP
+    # =====================================================
+
+    print()
+    print("📤 Iniciando envío de clips")
+    print(
+        f"Se van a enviar {len(clips)} vídeos para revisión."
+    )
+
+    telegram_request(
+        bot_token,
+        "sendMessage",
+        payload={
+            "chat_id": chat_id,
+            "text": (
+                "📤 Iniciando envío de clips\n"
+                f"Se van a enviar {len(clips)} vídeos para revisión"
+            ),
+        },
+    )
+
     sent_clips = []
 
     for clip in clips:
