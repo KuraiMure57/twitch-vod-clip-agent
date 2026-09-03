@@ -7,8 +7,15 @@ from pathlib import Path
 from google import genai
 
 
+VOD_ID = os.getenv("VOD_ID")
+
+if not VOD_ID:
+    raise RuntimeError(
+        "VOD_ID is not configured."
+    )
+
 INPUT_FILE = Path(
-    "data/transcriptions/2846005700.json"
+    f"data/transcriptions/{VOD_ID}.json"
 )
 
 OUTPUT_DIR = Path(
@@ -16,7 +23,7 @@ OUTPUT_DIR = Path(
 )
 
 OUTPUT_FILE = (
-    OUTPUT_DIR / "2846005700_candidates.json"
+    OUTPUT_DIR / f"{VOD_ID}_candidates.json"
 )
 
 MODEL_NAME = "gemini-3.6-flash"
@@ -289,7 +296,6 @@ def request_gemini(
                 or "UNAVAILABLE" in error_text
                 or "429" in error_text
                 or "RESOURCE_EXHAUSTED" in error_text
-                or "429" in error_text
             )
 
             if (
@@ -555,6 +561,18 @@ def save_result(
 
 def main() -> int:
     try:
+        print(
+            f"VOD ID: {VOD_ID}"
+        )
+
+        print(
+            f"Input transcription: {INPUT_FILE}"
+        )
+
+        print(
+            f"Output analysis: {OUTPUT_FILE}"
+        )
+
         transcription = load_transcription()
 
         segments = build_transcription_segments(
@@ -677,6 +695,7 @@ def main() -> int:
         )
 
         statistics = {
+            "vod_id": VOD_ID,
             "transcription_segments": len(
                 segments
             ),
@@ -689,7 +708,6 @@ def main() -> int:
                 deduplicated_candidates
             ),
             "model": MODEL_NAME,
-            "chunk_size": CHUNK_SIZE,
         }
 
         save_result(
@@ -707,17 +725,7 @@ def main() -> int:
         )
 
         print(
-            "========================================="
-        )
-
-        print(
-            f"Chunks processed: "
-            f"{len(chunks) - len(failed_chunks)}"
-        )
-
-        print(
-            f"Failed chunks: "
-            f"{len(failed_chunks)}"
+            f"VOD ID: {VOD_ID}"
         )
 
         print(
@@ -731,69 +739,17 @@ def main() -> int:
         )
 
         print(
+            f"Failed chunks: "
+            f"{failed_chunks}"
+        )
+
+        print(
             f"Output: {OUTPUT_FILE}"
         )
 
-        print()
-
-        for index, candidate in enumerate(
-            deduplicated_candidates,
-            start=1,
-        ):
-            print(
-                f"Candidate #{index}"
-            )
-
-            print(
-                f"  Start: "
-                f"{candidate['start']}"
-            )
-
-            print(
-                f"  End: "
-                f"{candidate['end']}"
-            )
-
-            print(
-                f"  Duration: "
-                f"{candidate['duration']}s"
-            )
-
-            print(
-                f"  Score: "
-                f"{candidate['score']}"
-            )
-
-            print(
-                f"  Category: "
-                f"{candidate['category']}"
-            )
-
-            print(
-                f"  Title: "
-                f"{candidate['title']}"
-            )
-
-            print(
-                f"  Confidence: "
-                f"{candidate['confidence']}"
-            )
-
-            print()
-
-        if failed_chunks:
-            print(
-                "WARNING: Some Gemini chunks failed:"
-            )
-
-            print(
-                failed_chunks
-            )
-
-            print(
-                "The available candidates were "
-                "saved successfully."
-            )
+        print(
+            "========================================="
+        )
 
         return 0
 
@@ -807,4 +763,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        main()
+    )
