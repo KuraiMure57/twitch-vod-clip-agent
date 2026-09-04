@@ -1153,15 +1153,6 @@ def main() -> int:
         print("\n🎉 ¡Todos los vídeos y clips en cola han sido revisados correctamente!")
         return 0
 
-    except Exception as e:
-        print(f"\n❌ ERROR CRÍTICO EN EL PROCESO: {e}", file=sys.stderr)
-        return 1
-
-
-# DISPARADOR DE EJECUCIÓN PRINCIPAL
-if __name__ == "__main__":
-    sys.exit(main())
-        return 0
     except requests.RequestException as exc:
         print(
             f"Telegram HTTP error: {exc}",
@@ -1177,6 +1168,7 @@ if __name__ == "__main__":
         return 1
 
 
+# DISPARADOR DE EJECUCIÓN PRINCIPAL
 if __name__ == "__main__":
     raise SystemExit(
         main()
