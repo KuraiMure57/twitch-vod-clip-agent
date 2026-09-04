@@ -45,7 +45,8 @@ def get_config() -> tuple[str, str]:
     return bot_token, chat_id
 
 
-def find_manifest() -> Path:
+# CAMBIO AQUÍ: Ahora devuelve una lista con todos los manifiestos ordenados
+def find_all_manifests() -> list[Path]:
     if not MANIFEST_DIR.exists():
         raise FileNotFoundError(
             f"Clips directory not found: {MANIFEST_DIR}"
@@ -60,13 +61,7 @@ def find_manifest() -> Path:
             "No clips manifest was found."
         )
 
-    if len(manifests) > 1:
-        raise RuntimeError(
-            "Multiple clips manifests were found. "
-            "Expected exactly one manifest."
-        )
-
-    return manifests[0]
+    return manifests
 
 
 def load_manifest(
@@ -692,6 +687,28 @@ def save_pending_state(
     return output_file
 
 
+# NUEVA FUNCIÓN COMODÍN: Asegura la creación del JSON final que GitHub Actions necesita validar
+def save_final_approved_json(vod_id: str, approved_clips: list) -> Path:
+    APPROVED_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    output_file = APPROVED_DIR / f"{vod_id}_approved.json"
+    
+    # Estructura limpia requerida por los pasos subsiguientes
+    final_data = {
+        "vod_id": vod_id,
+        "approved_clips": approved_clips,
+        "timestamp": time.time()
+    }
+    
+    with output_file.open("w", encoding="utf-8") as file:
+        json.dump(final_data, file, indent=2, ensure_ascii=False)
+        
+    print(f"📁 Archivo final de éxitos generado con éxito: {output_file}")
+    return output_file
+
+
 def answer_callback(
     bot_token: str,
     callback_id: str,
@@ -1069,13 +1086,14 @@ def save_approval_result(
     return output_file
 
 
+# CAMBIO AQUÍ: Ahora procesa dinámicamente todos los manifiestos en bucle
 def main() -> int:
     try:
         print(
             "========================================="
         )
         print(
-            "Telegram Clip Approval"
+            "Telegram Clip Approval (Multi-VOD Loop)"
         )
         print(
             "========================================="
@@ -1083,112 +1101,72 @@ def main() -> int:
 
         bot_token, chat_id = get_config()
 
-        manifest_file = find_manifest()
+        # Obtenemos la lista con todas las carpetas de vídeos
+        manifest_files = find_all_manifests()
+        print(f"📚 Se encontraron {len(manifest_files)} vídeos listos para procesar.")
 
-        manifest = load_manifest(
-            manifest_file
-        )
+        verify_bot(bot_token)
 
-        vod_id = str(
-            manifest["vod_id"]
-        )
+        # Procesamos cada vídeo de forma secuencial, uno detrás de otro
+        for manifest_file in manifest_files:
+            manifest = load_manifest(manifest_file)
+            vod_id = str(manifest["vod_id"])
+            clips = manifest.get("clips", [])
 
-        clips = manifest.get(
-            "clips",
-            [],
-        )
-
-        print(
-            f"VOD ID: {vod_id}"
-        )
-
-        print(
-            f"Manifest: {manifest_file}"
-        )
-
-        print(
-            f"Clips to review: "
-            f"{len(clips)}"
-        )
-
-        if not clips:
             print()
-            print(
-                "No clips to send."
+            print(f"🎬 PROCESANDO VOD ID: {vod_id}")
+            print(f"   Ruta manifiesto: {manifest_file}")
+            print(f"   Clips para revisar: {len(clips)}")
+
+            if not clips:
+                print("   ⚠️ No hay clips para enviar en este vídeo. Pasando al siguiente.")
+                continue
+
+            # Envia los clips de este vídeo concreto
+            state = send_all_clips(
+                bot_token,
+                chat_id,
+                manifest,
             )
 
-            return 0
+            pending_file = save_pending_state(state)
+            print(f"   Pendientes guardados en: {pending_file}")
 
-        verify_bot(
-            bot_token
-        )
+            # Se detiene aquí a escuchar Telegram hasta que votes TODOS los clips de ESTE vídeo
+            final_state = poll_for_approvals(
+                bot_token,
+                chat_id,
+                state,
+            )
 
-        state = send_all_clips(
-            bot_token,
-            chat_id,
-            manifest,
-        )
+            result_file = save_approval_result(final_state)
+            
+            # Forzamos la creación del archivo esperado por GitHub Actions
+            save_final_approved_json(vod_id, final_state.get("approved", []))
 
-        pending_file = save_pending_state(
-            state
-        )
+            print()
+            print(f"✅ VOD {vod_id} completado con éxito.")
+            print(f"   Aprobados: {len(final_state['approved'])} | Rechazados: {len(final_state['rejected'])}")
+            print(f"   Resultado guardado en: {result_file}")
+            print("=========================================")
 
-        print()
-        print(
-            f"Pending state saved: "
-            f"{pending_file}"
-        )
-
-        final_state = poll_for_approvals(
-            bot_token,
-            chat_id,
-            state,
-        )
-
-        result_file = save_approval_result(
-            final_state
-        )
-
-        print()
-        print(
-            "========================================="
-        )
-
-        print(
-            "Telegram approval completed."
-        )
-
-        print(
-            f"Approved: "
-            f"{len(final_state['approved'])}"
-        )
-
-        print(
-            f"Rejected: "
-            f"{len(final_state['rejected'])}"
-        )
-
-        print(
-            f"Pending: "
-            f"{len(final_state['pending'])}"
-        )
-
-        print(
-            f"Output: {result_file}"
-        )
-
-        print(
-            "========================================="
-        )
-
+        print("\n🎉 ¡Todos los vídeos y clips en cola han sido revisados correctamente!")
         return 0
 
+    except Exception as e:
+        print(f"\n❌ ERROR CRÍTICO EN EL PROCESO: {e}", file=sys.stderr)
+        return 1
+
+
+# DISPARADOR DE EJECUCIÓN PRINCIPAL
+if __name__ == "__main__":
+    sys.exit(main())
+        return 0
     except requests.RequestException as exc:
         print(
             f"Telegram HTTP error: {exc}",
             file=sys.stderr,
         )
-
         return 1
 
     except Exception as exc:
@@ -1196,7 +1174,6 @@ def main() -> int:
             f"ERROR: {exc}",
             file=sys.stderr,
         )
-
         return 1
 
 
