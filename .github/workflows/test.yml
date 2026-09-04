@@ -423,9 +423,107 @@ jobs:
           if-no-files-found: error
 
       # ============================================================
+      # PUENTE AUTOMÁTICO HACIA PROYECTO 1 (TWITCH-TIKTOK-AGENT)
+      # ============================================================
+      - name: Trigger Twitch TikTok Agent for Approved Clips
+        if: success()
+        env:
+          CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: |
+          echo "========================================="
+          echo "🤖 INICIANDO DISPARADOR AUTOMÁTICO AL PROYECTO 1"
+          echo "========================================="
+          
+          if [ -z "$CROSS_REPO_TOKEN" ]; then
+            echo "❌ ERROR: El secret CROSS_REPO_TOKEN no está configurado en el Proyecto 2."
+            exit 1
+          fi
+
+          # 1. Buscamos mediante la API de GitHub los IDs de los artefactos recién subidos
+          echo "Buscando IDs de los artefactos en GitHub..."
+          RUN_ARTIFACTS=$(curl -s -H "Authorization: Bearer $CROSS_REPO_TOKEN" \
+            "https://github.com{{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts")
+          
+          CLIPS_ART_ID=$(echo "$RUN_ARTIFACTS" | python3 -c "import sys, json; print(next((a['id'] for a in json.load(sys.stdin)['artifacts'] if a['name'] == 'generated-clips-test'), ''))")
+          MANIFEST_ART_ID=$(echo "$RUN_ARTIFACTS" | python3 -c "import sys, json; print(next((a['id'] for a in json.load(sys.stdin)['artifacts'] if a['name'] == 'clips-manifest-test'), ''))")
+
+          if [ -z "$CLIPS_ART_ID" ] || [ -z "$MANIFEST_ART_ID" ]; then
+            echo "❌ ERROR: No se pudieron encontrar los IDs de los artefactos en la API de GitHub."
+            exit 1
+          fi
+
+          echo "✅ ID de Clips Artifact: $CLIPS_ART_ID"
+          echo "✅ ID de Manifest Artifact: $MANIFEST_ART_ID"
+
+          # 2. Leemos todos los JSON de aprobación y disparamos el Proyecto 1 por cada clip aprobado
+          python3 - <<PY
+          import os
+          import json
+          import glob
+          import urllib.request
+          import urllib.parse
+
+          clips_art_id = "$CLIPS_ART_ID"
+          manifest_art_id = "$MANIFEST_ART_ID"
+          token = os.environ["CROSS_REPO_TOKEN"]
+
+          # Buscamos todos los archivos de aprobación generados
+          approval_files = glob.glob("data/telegram_approved/*_approved.json")
+          if not approval_files:
+              print("ℹ️ No se encontraron archivos de aprobación. No hay nada que enviar.")
+              sys.exit(0)
+
+          for auth_file in approval_files:
+              with open(auth_file, "r", encoding="utf-8") as f:
+                  data = json.load(f)
+              
+              vod_id = data.get("vod_id")
+              approved_clips = data.get("approved_clips", [])
+              
+              print(f"\nEvaluating VOD: {vod_id} -> Found {len(approved_clips)} approved clips.")
+              
+              for clip in approved_clips:
+                  # Extraemos el nombre real del archivo mp4 (ej: clip_1.mp4)
+                  clip_path = clip.get("file", "")
+                  if not clip_path:
+                      continue
+                  clip_filename = os.path.basename(clip_path)
+                  
+                  print(f"🚀 Disparando Proyecto 1 para el archivo: {clip_filename}...")
+                  
+                  # Configuramos la petición HTTP para despertar al Proyecto 1
+                  url = "https://github.com"
+                  payload = {
+                      "event_type": "vod_clips_approved",
+                      "client_payload": {
+                          "artifact_id": clips_art_id,
+                          "manifest_artifact_id": manifest_art_id,
+                          "clip_filename": clip_filename
+                      }
+                  }
+                  
+                  req = urllib.request.Request(
+                      url,
+                      data=json.dumps(payload).encode("utf-8"),
+                      headers={
+                          "Accept": "application/vnd.github+json",
+                          "Authorization": f"Bearer {token}",
+                          "X-GitHub-Api-Version": "2022-11-28",
+                          "Content-Type": "application/json"
+                      },
+                      method="POST"
+                  )
+                  
+                  try:
+                      with urllib.request.urlopen(req) as resp:
+                          print(f"   ✅ Petición aceptada por GitHub (Status: {resp.status})")
+                  except Exception as e:
+                      print(f"   ❌ Error enviando disparo para {clip_filename}: {e}")
+          PY
+
+      # ============================================================
       # FINALIZACIÓN CORRECTA
       # ============================================================
-
       - name: Complete VOD pipeline test completed
         run: |
           echo "========================================="
@@ -452,7 +550,6 @@ jobs:
       # ============================================================
       # AVISO DE FINALIZACIÓN EN TELEGRAM
       # ============================================================
-
       - name: Send successful completion message to Telegram
         if: success()
         env:
@@ -489,38 +586,22 @@ jobs:
           )
 
           url = (
-              f"https://api.telegram.org/bot{bot_token}/sendMessage?"
-              f"{params}"
+              f"https://api.telegram.org/bot{bot_token}/sendMessage?{params}"
           )
 
-          with urllib.request.urlopen(
-              url,
-              timeout=30
-          ) as response:
-              pass
-          PY
-              timeout=15,
-          ) as response:
-              data = json.loads(
-                  response.read().decode("utf-8")
-              )
-
-          if not data.get("ok"):
-              raise RuntimeError(data)
-
-          print(
-              "Telegram completion message sent."
-          )
+          try:
+              with urllib.request.urlopen(url, timeout=15) as response:
+                  data = json.loads(response.read().decode("utf-8"))
+              if not data.get("ok"):
+                  raise RuntimeError(data)
+              print("Telegram completion message sent.")
+          except Exception as exc:
+              print(f"ERROR: Could not send completion message: {exc}")
           PY
 
       # ============================================================
       # AVISO AUTOMÁTICO DE FALLO
-      #
-      # Si cualquier paso anterior falla, GitHub ejecutará este paso.
-      # Así recibes el aviso directamente en Telegram sin tener que
-      # consultar /estado.
       # ============================================================
-
       - name: Send failure message to Telegram
         if: failure()
         env:
@@ -542,7 +623,7 @@ jobs:
 
           text = (
               "❌ El procesamiento ha fallado.\n\n"
-              "El Proyecto 1 no ha podido completar "
+              "El Proyecto 2 no ha podido completar "
               "el procesamiento del VOD.\n\n"
               "Revisa GitHub Actions para ver "
               "el paso que ha producido el error."
@@ -556,33 +637,20 @@ jobs:
           )
 
           url = (
-              f"https://api.telegram.org/bot{bot_token}/sendMessage?"
-              f"{params}"
+              f"https://api.telegram.org/bot{bot_token}/sendMessage?{params}"
           )
 
           try:
-              with urllib.request.urlopen(
-                  url,
-                  timeout=15,
-              ) as response:
-                  data = json.loads(
-                      response.read().decode("utf-8")
-                  )
+              with urllib.request.urlopen(url, timeout=15) as response:
+                  data = json.loads(response.read().decode("utf-8"))
           except Exception as exc:
-              print(
-                  "ERROR: Could not send Telegram "
-                  f"failure message: {exc}"
-              )
+              print(f"ERROR: Could not send Telegram failure message: {exc}")
               raise SystemExit(1)
 
           if not data.get("ok"):
-              print(
-                  "ERROR: Telegram returned an error."
-              )
+              print("ERROR: Telegram returned an error.")
               print(data)
               raise SystemExit(1)
 
-          print(
-              "Telegram failure message sent."
-          )
+          print("Telegram failure message sent.")
           PY
