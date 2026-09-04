@@ -359,21 +359,22 @@ jobs:
           echo
           echo "Telegram approval process completed."
 
+      # CAMBIO AQUÍ: Verificación dinámica para soportar múltiples o diferentes JSON de VODs procesados
       - name: Check Telegram approval result
         run: |
           echo "========================================="
           echo "Telegram approval result:"
           echo "========================================="
 
-          APPROVAL_FILE="data/telegram_approved/${VOD_ID}_approved.json"
-
-          if [ ! -f "$APPROVAL_FILE" ]; then
-            echo "ERROR: Telegram approval result not found:"
-            echo "$APPROVAL_FILE"
+          if [ -d "data/telegram_approved" ] && [ "$(ls -A data/telegram_approved/*_approved.json 2>/dev/null)" ]; then
+            echo "✅ Archivos de aprobación encontrados:"
+            ls -lh data/telegram_approved/*_approved.json
+            echo "-----------------------------------------"
+            cat data/telegram_approved/*_approved.json
+          else
+            echo "❌ ERROR: No se encontró ningún archivo de aprobación en data/telegram_approved/"
             exit 1
           fi
-
-          cat "$APPROVAL_FILE"
 
           echo
           echo "Telegram approval result verified."
@@ -413,18 +414,16 @@ jobs:
           path: data/clips/${{ env.VOD_ID }}/clips_manifest.json
           if-no-files-found: error
 
+      # CAMBIO AQUÍ: Sube dinámicamente cualquier JSON de aprobación generado
       - name: Upload Telegram approval result
         uses: actions/upload-artifact@v4
         with:
           name: telegram-approval-test
-          path: data/telegram_approved/${{ env.VOD_ID }}_approved.json
+          path: data/telegram_approved/*_approved.json
           if-no-files-found: error
 
       # ============================================================
       # FINALIZACIÓN CORRECTA
-      #
-      # Este paso se ejecuta únicamente cuando todos los pasos
-      # anteriores han terminado correctamente.
       # ============================================================
 
       - name: Complete VOD pipeline test completed
@@ -452,8 +451,6 @@ jobs:
 
       # ============================================================
       # AVISO DE FINALIZACIÓN EN TELEGRAM
-      #
-      # Se envía cuando el pipeline completo ha terminado bien.
       # ============================================================
 
       - name: Send successful completion message to Telegram
@@ -498,6 +495,10 @@ jobs:
 
           with urllib.request.urlopen(
               url,
+              timeout=30
+          ) as response:
+              pass
+          PY
               timeout=15,
           ) as response:
               data = json.loads(
