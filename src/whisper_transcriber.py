@@ -118,7 +118,7 @@ def transcribe_video(
             json.dump({"vod_id": vod_id, "clips": []}, f)
             
         print("✅ Manifiesto vacío generado. Abortando pipeline de forma segura.")
-        sys.exit(0) # Salimos limpiamente para que continúe el flujo hacia el script de Telegram
+        return output_file # Salimos limpiamente para que continúe el flujo hacia el script de Telegram
 
     # Si el texto es válido, continúa el flujo normal de tu script original:
     output = {
