@@ -87,7 +87,7 @@ def transcribe_video(
     text_final = result.get("text", "")
 
     # =====================================================================
-    # 2. FILTRO UNIVERSAL ANTIALUCINACIÓN ANTES DE GUARDAR
+    # 2. FILTRO UNIVERSAL ANTIALUCINACIÓN RE-CALIBRADO (MÁS PERMISIVO)
     # =====================================================================
     texto_limpio = text_final.strip()
     palabras = texto_limpio.split()
@@ -98,27 +98,29 @@ def transcribe_video(
 
     es_basura = False
 
-    # Condición A: El texto es largo pero usa menos de 3 letras distintas (ej: "YYYYYYY")
-    if len(texto_limpio) > 10 and len(letras_unicas) <= 2:
+    # Condición A: El texto es largo pero usa menos de 3 letras distintas en TOTAL (ej: "YYYYYYY")
+    # Subimos el límite a 25 caracteres mínimos para no romper textos legítimos cortos.
+    if len(texto_limpio) > 25 and len(letras_unicas) <= 2:
         es_basura = True
 
-    # Condición B: Repite tanto la misma palabra que no hay variedad (ej: "Thanks for watching...")
-    elif len(palabras) > 10 and ratio_repeticion < 0.15:
+    # Condición B: Bajamos el ratio a 0.05 (5%). 
+    # Solo considerará basura si repite la misma palabra el 95% del tiempo.
+    elif len(palabras) > 30 and ratio_repeticion < 0.05:
         es_basura = True
 
     if es_basura:
-        print("\n⚠️ ERROR CRÍTICO: Se ha detectado una transcripción corrupta o en bucle infinito.")
+        print("\n⚠️ ERROR CRÍTICO: Se ha detectado una alucinación real en bucle.")
         print("Forzando la creación de un manifiesto vacío para notificar correctamente a Telegram.")
         
-        # Escribimos el manifiesto vacío en la carpeta de clips para activar la alerta del bot
         clips_dir = Path(f"data/clips/{vod_id}")
         clips_dir.mkdir(parents=True, exist_ok=True)
         
         with open(clips_dir / "clips_manifest.json", "w", encoding="utf-8") as f:
-            json.dump({"vod_id": vod_id, "clips": []}, f)
+            json.dump({"vod_id": vod_id, "clips": []}, f),
             
-        print("✅ Manifiesto vacío generado. Abortando pipeline de forma segura.")
-        return output_file # Salimos limpiamente para que continúe el flujo hacia el script de Telegram
+        print("✅ Manifiesto vacío generado. Continuando pipeline de forma limpia.")
+        return output_file
+
 
     # Si el texto es válido, continúa el flujo normal de tu script original:
     output = {
