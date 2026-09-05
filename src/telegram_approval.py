@@ -270,6 +270,15 @@ def compress_clip_for_telegram(
         f"{output_file}"
     )
 
+    # ESTRATEGIA: Mantenemos 1080p (solo forzamos enteros en ancho/alto)
+    # Si el bitrate calculado es muy bajo (<1200 kbps), bajamos a 720p para evitar pixelado
+    if video_bitrate_kbps < 1200:
+        scale_filter = "scale=w=1280:h=720:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2"
+        print("  [Compresión] Bitrate bajo detectado para la duración. Escalando a 720p para preservar nitidez.")
+    else:
+        scale_filter = "scale=ceil(iw/2)*2:ceil(ih/2)*2"
+        print("  [Compresión] Bitrate óptimo. Manteniendo resolución original en la compresión.")
+
     subprocess.run(
         [
             "ffmpeg",
@@ -277,8 +286,7 @@ def compress_clip_for_telegram(
             "-i",
             str(clip_file),
             "-vf",
-            "scale=w=1280:h=720:force_original_aspect_ratio=decrease,"
-            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            scale_filter,
             "-c:v",
             "libx264",
             "-preset",
@@ -298,7 +306,11 @@ def compress_clip_for_telegram(
             str(output_file),
         ],
         check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
+
+    return output_file
 
     if not output_file.exists():
         raise RuntimeError(
@@ -315,7 +327,7 @@ def compress_clip_for_telegram(
 
     if output_size > TELEGRAM_MAX_VIDEO_SIZE_BYTES:
         print(
-            "  Compressed file is still too large."
+            "  Compressed file is still too large. Applying second adaptive pass..."
         )
 
         second_output = (
@@ -324,7 +336,7 @@ def compress_clip_for_telegram(
         )
 
         second_target_size_bytes = (
-            35 * 1024 * 1024
+            38 * 1024 * 1024
         )
 
         second_target_bits = (
@@ -338,7 +350,7 @@ def compress_clip_for_telegram(
         )
 
         second_video_bitrate_kbps = max(
-            300,
+            350,
             int(
                 second_total_bitrate_kbps
                 - audio_bitrate_kbps
@@ -350,6 +362,7 @@ def compress_clip_for_telegram(
             f"{second_video_bitrate_kbps} kbps"
         )
 
+        # SEGUNDA PASADA: Forzamos escala 720p optimizada en lugar de bajar a 540p pixelado
         subprocess.run(
             [
                 "ffmpeg",
@@ -357,7 +370,7 @@ def compress_clip_for_telegram(
                 "-i",
                 str(clip_file),
                 "-vf",
-                "scale=w=960:h=540:force_original_aspect_ratio=decrease,"
+                "scale=w=1280:h=720:force_original_aspect_ratio=decrease,"
                 "pad=ceil(iw/2)*2:ceil(ih/2)*2",
                 "-c:v",
                 "libx264",
@@ -378,6 +391,8 @@ def compress_clip_for_telegram(
                 str(second_output),
             ],
             check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
 
         if not second_output.exists():
@@ -517,9 +532,6 @@ def send_clip(
         )
 
         try:
-            # El archivo debe abrirse de nuevo en cada intento.
-            # Si una subida se corta, no reutilizamos el
-            # file object anterior.
             with telegram_file.open(
                 "rb"
             ) as video_file:
@@ -594,6 +606,8 @@ def send_clip(
                 retry_delay * 2,
                 TELEGRAM_UPLOAD_RETRY_MAX_SECONDS,
             )
+
+
 def send_all_clips(
     bot_token: str,
     chat_id: str,
@@ -619,11 +633,11 @@ def send_all_clips(
             payload={
                 "chat_id": chat_id,
                 "text": (
-                    f"✅ *Pipeline de VOD completado*\n\n"
+                    f"✅ <b>Pipeline de VOD completado</b>\n\n"
                     f"VOD: {vod_id}\n\n"
-                    f"⚠️ El proceso terminó con éxito, pero *ningún clip superó tus filtros mínimos* (Score > 70 o duración de 15-90s). No hay vídeos para revisar."
+                    f"⚠️ El proceso terminó con éxito, pero <b>ningún clip superó tus filtros mínimos</b> (Score > 70 o duración de 15-180s). No hay vídeos para revisar."
                 ),
-                "parse_mode": "Markdown",
+                "parse_mode": "HTML",
             },
         )
         return {
@@ -644,11 +658,11 @@ def send_all_clips(
         payload={
             "chat_id": chat_id,
             "text": (
-                f"✅ *Pipeline de VOD completado*\n\n"
-                f"VOD: {vod_id}\n"
-                f"📤 Iniciando envío de {len(clips)} clips para su revisión."
+                f"✅ <b>Pipeline de VOD completado</b>\n\n"
+                f"VOD: {vod_id}\n\n"
+                f"📤 <b>Iniciando envío de {len(clips)} clips para su revisión.</b>"
             ),
-            "parse_mode": "Markdown",
+            "parse_mode": "HTML",
         },
     )
 
