@@ -594,8 +594,6 @@ def send_clip(
                 retry_delay * 2,
                 TELEGRAM_UPLOAD_RETRY_MAX_SECONDS,
             )
-
-
 def send_all_clips(
     bot_token: str,
     chat_id: str,
@@ -604,36 +602,57 @@ def send_all_clips(
     vod_id = str(
         manifest["vod_id"]
     )
-
     clips = manifest.get(
         "clips",
         [],
     )
 
     # =====================================================
-    # AVISO INICIAL ANTES DE ENVIAR EL PRIMER CLIP
+    # EVALUACIÓN DE CANDIDATOS ANTES DE ENVIAR MENSAJES
     # =====================================================
+    if not clips:
+        print()
+        print("⚠️ No hay clips para enviar tras aplicar los filtros.")
+        telegram_request(
+            bot_token,
+            "sendMessage",
+            payload={
+                "chat_id": chat_id,
+                "text": (
+                    f"✅ *Pipeline de VOD completado*\n\n"
+                    f"VOD: {vod_id}\n\n"
+                    f"⚠️ El proceso terminó con éxito, pero *ningún clip superó tus filtros mínimos* (Score > 70 o duración de 15-90s). No hay vídeos para revisar."
+                ),
+                "parse_mode": "Markdown",
+            },
+        )
+        return {
+            "vod_id": vod_id,
+            "sent_clips": [],
+        }
 
+    # Si sí hay clips, continúa con el comportamiento normal:
     print()
     print("📤 Iniciando envío de clips")
     print(
         f"Se van a enviar {len(clips)} vídeos para revisión."
     )
-
+    
     telegram_request(
         bot_token,
         "sendMessage",
         payload={
             "chat_id": chat_id,
             "text": (
-                "📤 Iniciando envío de clips\n"
-                f"Se van a enviar {len(clips)} vídeos para revisión"
+                f"✅ *Pipeline de VOD completado*\n\n"
+                f"VOD: {vod_id}\n"
+                f"📤 Iniciando envío de {len(clips)} clips para su revisión."
             ),
+            "parse_mode": "Markdown",
         },
     )
 
     sent_clips = []
-
     for clip in clips:
         message_id = send_clip(
             bot_token,
@@ -641,7 +660,6 @@ def send_all_clips(
             vod_id,
             clip,
         )
-
         sent_clips.append(
             {
                 "index": clip["index"],
@@ -654,7 +672,6 @@ def send_all_clips(
         "vod_id": vod_id,
         "sent_clips": sent_clips,
     }
-
 
 def save_pending_state(
     state: dict,
