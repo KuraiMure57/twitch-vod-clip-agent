@@ -682,77 +682,11 @@ jobs:
           fi
 
           echo "========================================="
-
-      - name: Notify Telegram pipeline completion
-        if: success()
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+   
+      - name: Upload pipeline summary
+        if: always()
         run: |
-          python3 - <<'PY'
-          import os
-          import urllib.parse
-          import urllib.request
-
-          token = os.environ.get(
-              "TELEGRAM_BOT_TOKEN"
-          )
-          chat_id = os.environ.get(
-              "TELEGRAM_CHAT_ID"
-          )
-
-          if not token or not chat_id:
-              print(
-                  "Telegram notification skipped: "
-                  "credentials not configured."
-              )
-              raise SystemExit(0)
-
-          vod_id = os.environ.get(
-              "VOD_ID",
-              "unknown",
-          )
-
-          text = (
-              "✅ Pipeline de VOD completado\n\n"
-              f"VOD: {vod_id}\n"
-              "Los clips están disponibles en Telegram "
-              "para su revisión."
-          )
-
-          data = urllib.parse.urlencode(
-              {
-                  "chat_id": chat_id,
-                  "text": text,
-              }
-          ).encode("utf-8")
-
-          url = (
-              f"https://api.telegram.org/"
-              f"bot{token}/sendMessage"
-          )
-
-          request = urllib.request.Request(
-              url,
-              data=data,
-              method="POST",
-          )
-
-          try:
-              with urllib.request.urlopen(
-                  request,
-                  timeout=30,
-              ) as response:
-                  print(
-                      f"Telegram completion notification "
-                      f"sent: HTTP {response.status}"
-                  )
-          except Exception as exc:
-              print(
-                  f"Telegram completion notification "
-                  f"failed: {exc}"
-              )
-          PY
+          # ... (contenido del resumen que ya tienes) ...
 
       - name: Notify Telegram pipeline failure
         if: failure()
@@ -822,4 +756,5 @@ jobs:
                   f"Telegram failure notification "
                   f"failed: {exc}"
               )
+          PY
           PY
