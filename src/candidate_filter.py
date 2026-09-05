@@ -13,7 +13,7 @@ OUTPUT_DIR = Path(
 
 MIN_SCORE = 70
 MIN_DURATION = 15
-MAX_DURATION = 90
+MAX_DURATION = 180
 
 
 def find_analysis_file() -> Path:
