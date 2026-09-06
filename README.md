@@ -13,31 +13,31 @@ Those tasks belong to a separate project.
 ## 🔄 Current workflow
 
 ```text
-Twitch VOD
-    ↓
-Twitch authentication
-    ↓
-Find latest VOD
-    ↓
-Download complete VOD
-    ↓
-Whisper transcription
-    ↓
-Gemini analysis
-    ↓
-Interesting moments / candidates
-    ↓
-Candidate filtering
-    ↓
-Generate MP4 clips
-    ↓
-Create clips manifest
-    ↓
-Send clips to Telegram
-    ↓
-Manual approval
-    ├── ✅ Approve
-    └── ❌ Reject
+/start en Telegram
+        ↓
+telegram_listener.yml
+        ↓
+descubrir VOD de Twitch
+        ↓
+descargar VOD
+        ↓
+Whisper
+        ↓
+Gemini
+        ↓
+candidate_filter
+        ↓
+clip_generator
+        ↓
+telegram_approval
+        ↓
+aprobar / rechazar
+        ↓
+JSON de aprobados
+        ↓
+repository_dispatch
+        ↓
+Project 1
 ```
 
 ## 🤖 What the agent does
