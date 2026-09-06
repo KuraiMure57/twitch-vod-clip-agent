@@ -61,6 +61,41 @@ Busca especialmente:
 - interacciones que tengan potencial para entretener;
 - momentos con suficiente contexto para entenderse como clip.
 
+También debes prestar especial atención a:
+
+- códigos de recompensa;
+- códigos promocionales;
+- códigos para canjear dentro de un juego;
+- códigos que el creador muestra, lee o introduce;
+- momentos en los que el creador canjea un código;
+- momentos en los que un código proporciona una recompensa;
+- códigos que otros jugadores podrían reutilizar;
+- información sobre cómo conseguir o canjear una recompensa mediante un código.
+
+IMPORTANTE SOBRE LOS CÓDIGOS DE RECOMPENSA:
+
+Si en la transcripción aparece un momento en el que se muestra, menciona,
+lee, introduce, canjea o revela un código que pueda ser utilizado por otros
+jugadores para conseguir una recompensa, debes considerarlo un candidato
+especialmente importante.
+
+Estos momentos pueden ser útiles aunque no sean especialmente graciosos
+o espectaculares, porque la información del código puede ser útil para
+otros jugadores.
+
+Si identificas un candidato de este tipo:
+
+- establece "is_reward_code": true;
+- utiliza una categoría relacionada con código/recompensa cuando sea apropiado;
+- explica en "reason" qué código o recompensa aparece, pero solo si esa
+  información está realmente presente en la transcripción;
+- intenta que el clip incluya suficiente contexto para que el espectador
+  pueda entender qué código se está mostrando y qué recompensa proporciona;
+- no inventes el código, la recompensa ni las condiciones de canje.
+
+Si el momento NO contiene un código de recompensa real, establece
+"is_reward_code": false.
+
 IMPORTANTE:
 
 NO inventes acontecimientos que no aparecen en la transcripción.
@@ -80,7 +115,9 @@ Para cada candidato devuelve:
 - category: categoría del momento;
 - reason: explicación breve de por qué puede funcionar;
 - title: título corto y atractivo;
-- confidence: confianza de 0 a 1.
+- confidence: confianza de 0 a 1;
+- is_reward_code: true si el momento contiene un código de recompensa
+  o canje útil para otros jugadores, false en caso contrario.
 
 Reglas:
 
@@ -95,6 +132,14 @@ Reglas:
    que no aparezcan en el texto.
 9. No uses información que no aparezca en esta parte de la transcripción.
 10. Prioriza momentos realmente interesantes sobre frases simplemente llamativas.
+11. Los códigos de recompensa pueden ser candidatos aunque no tengan una
+    puntuación alta por entretenimiento.
+12. No marques como código de recompensa una conversación genérica sobre
+    recompensas si no aparece un código o información concreta de canje.
+13. Si el código está incompleto o la transcripción no permite identificarlo
+    con suficiente seguridad, puedes marcar "is_reward_code": true si queda
+    claro que se está mostrando o canjeando un código, pero no inventes las
+    partes que falten.
 
 Devuelve ÚNICAMENTE JSON válido con esta estructura:
 
@@ -107,7 +152,8 @@ Devuelve ÚNICAMENTE JSON válido con esta estructura:
       "category": "susto",
       "reason": "Descripción breve.",
       "title": "Título del clip",
-      "confidence": 0.92
+      "confidence": 0.92,
+      "is_reward_code": false
     }
   ]
 }
@@ -467,6 +513,14 @@ def normalize_candidates(
             3,
         )
 
+        normalized_candidate["is_reward_code"] = (
+            candidate.get(
+                "is_reward_code",
+                False,
+            )
+            is True
+        )
+
         normalized_candidate["duration"] = round(
             (
                 normalized_candidate["end"]
@@ -491,6 +545,7 @@ def remove_duplicate_candidates(
     candidates = sorted(
         candidates,
         key=lambda candidate: (
+            candidate["is_reward_code"],
             candidate["score"],
             candidate["confidence"],
         ),
@@ -526,7 +581,11 @@ def remove_duplicate_candidates(
             )
 
     selected.sort(
-        key=lambda candidate: candidate["score"],
+        key=lambda candidate: (
+            candidate["is_reward_code"],
+            candidate["score"],
+            candidate["confidence"],
+        ),
         reverse=True,
     )
 
@@ -707,6 +766,11 @@ def main() -> int:
             "final_candidates": len(
                 deduplicated_candidates
             ),
+            "reward_code_candidates": sum(
+                1
+                for candidate in deduplicated_candidates
+                if candidate["is_reward_code"]
+            ),
             "model": MODEL_NAME,
         }
 
@@ -736,6 +800,11 @@ def main() -> int:
         print(
             f"Final candidates: "
             f"{len(deduplicated_candidates)}"
+        )
+
+        print(
+            f"Reward-code candidates: "
+            f"{statistics['reward_code_candidates']}"
         )
 
         print(
