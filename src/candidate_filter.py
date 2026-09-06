@@ -15,6 +15,22 @@ MIN_SCORE = 70
 MIN_DURATION = 15
 MAX_DURATION = 180
 
+REWARD_CODE_KEYWORDS = (
+    "código",
+    "codigo",
+    "code",
+    "canjear",
+    "canje",
+    "recompensa",
+    "reward",
+    "redeem",
+    "coupon",
+    "cupón",
+    "cupon",
+    "promocode",
+    "promo code",
+)
+
 
 def find_analysis_file() -> Path:
     if not INPUT_DIR.exists():
@@ -50,6 +66,32 @@ def load_candidates(
         encoding="utf-8",
     ) as file:
         return json.load(file)
+
+
+def is_reward_code_candidate(
+    candidate: dict,
+) -> bool:
+    explicit_flag = candidate.get(
+        "is_reward_code",
+        False,
+    )
+
+    if explicit_flag is True:
+        return True
+
+    searchable_text = " ".join(
+        str(candidate.get(field, ""))
+        for field in (
+            "category",
+            "reason",
+            "title",
+        )
+    ).lower()
+
+    return any(
+        keyword in searchable_text
+        for keyword in REWARD_CODE_KEYWORDS
+    )
 
 
 def validate_candidate(
@@ -131,6 +173,7 @@ def filter_candidates(
 
     rejected_score = 0
     rejected_duration = 0
+    selected_reward_codes = 0
 
     for index, candidate in enumerate(
         candidates,
@@ -155,20 +198,53 @@ def filter_candidates(
 
         duration = end - start
 
-        if score < MIN_SCORE:
-            rejected_score += 1
-            continue
-
-        if (
-            duration < MIN_DURATION
-            or duration > MAX_DURATION
-        ):
-            rejected_duration += 1
-            continue
-
-        normalized_candidate = dict(
+        reward_code = is_reward_code_candidate(
             candidate
         )
+
+        # Los códigos de recompensa tienen
+        # prioridad especial.
+        #
+        # No se descartan por score bajo ni por
+        # durar menos de MIN_DURATION.
+        #
+        # El único límite que mantienen es el
+        # máximo de MAX_DURATION para que el clip
+        # siga siendo válido para TikTok.
+        if reward_code:
+            if duration > MAX_DURATION:
+                rejected_duration += 1
+                continue
+
+            normalized_candidate = dict(
+                candidate
+            )
+
+            normalized_candidate[
+                "is_reward_code"
+            ] = True
+
+            selected_reward_codes += 1
+
+        else:
+            if score < MIN_SCORE:
+                rejected_score += 1
+                continue
+
+            if (
+                duration < MIN_DURATION
+                or duration > MAX_DURATION
+            ):
+                rejected_duration += 1
+                continue
+
+            normalized_candidate = dict(
+                candidate
+            )
+
+            normalized_candidate[
+                "is_reward_code"
+            ] = False
 
         normalized_candidate["start"] = round(
             start,
@@ -199,14 +275,24 @@ def filter_candidates(
             normalized_candidate
         )
 
+    # Los códigos de recompensa aparecen primero.
+    # Dentro de cada grupo, se mantiene el orden
+    # por score descendente.
     selected.sort(
-        key=lambda candidate: candidate["score"],
+        key=lambda candidate: (
+            candidate.get(
+                "is_reward_code",
+                False,
+            ),
+            candidate["score"],
+        ),
         reverse=True,
     )
 
     statistics = {
         "total_candidates": len(candidates),
         "selected_candidates": len(selected),
+        "selected_reward_codes": selected_reward_codes,
         "rejected_by_score": rejected_score,
         "rejected_by_duration": rejected_duration,
         "minimum_score": MIN_SCORE,
@@ -299,6 +385,10 @@ def main() -> int:
             f"{MIN_DURATION}-{MAX_DURATION} seconds"
         )
 
+        print(
+            "Reward-code exception: enabled"
+        )
+
         selected, statistics = filter_candidates(
             candidates
         )
@@ -322,6 +412,11 @@ def main() -> int:
         print(
             f"Selected candidates: "
             f"{statistics['selected_candidates']}"
+        )
+
+        print(
+            f"Selected reward-code candidates: "
+            f"{statistics['selected_reward_codes']}"
         )
 
         print(
@@ -370,6 +465,11 @@ def main() -> int:
             print(
                 f"  Category: "
                 f"{candidate['category']}"
+            )
+
+            print(
+                f"  Reward code: "
+                f"{candidate['is_reward_code']}"
             )
 
             print(
