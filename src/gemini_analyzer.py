@@ -28,16 +28,12 @@ OUTPUT_FILE = (
 
 MODEL_NAME = "gemini-3.6-flash"
 
-# Número aproximado de caracteres enviados a Gemini por bloque.
 CHUNK_SIZE = 12000
 
-# Número máximo de reintentos cuando Gemini devuelve un error temporal.
 MAX_RETRIES = 4
 
-# Tiempo inicial de espera entre reintentos.
 INITIAL_RETRY_DELAY = 10
 
-# Máximo de candidatos que puede devolver cada bloque.
 MAX_CANDIDATES_PER_CHUNK = 5
 
 
@@ -79,22 +75,22 @@ lee, introduce, canjea o revela un código que pueda ser utilizado por otros
 jugadores para conseguir una recompensa, debes considerarlo un candidato
 especialmente importante.
 
-Estos momentos pueden ser útiles aunque no sean especialmente graciosos
-o espectaculares, porque la información del código puede ser útil para
-otros jugadores.
-
 Si identificas un candidato de este tipo:
 
 - establece "is_reward_code": true;
 - utiliza una categoría relacionada con código/recompensa cuando sea apropiado;
-- explica en "reason" qué código o recompensa aparece, pero solo si esa
-  información está realmente presente en la transcripción;
-- intenta que el clip incluya suficiente contexto para que el espectador
-  pueda entender qué código se está mostrando y qué recompensa proporciona;
-- no inventes el código, la recompensa ni las condiciones de canje.
+- explica en "reason" qué código o recompensa aparece;
+- intenta que el clip incluya suficiente contexto;
+- si puedes identificar el código completo de forma fiable en la transcripción,
+  devuelve también "reward_code" con el código exacto;
+- si el código está incompleto, dudoso o no puede identificarse con seguridad,
+  NO inventes las partes que falten;
+- si no puedes identificar el código con seguridad, usa "reward_code": null.
 
-Si el momento NO contiene un código de recompensa real, establece
-"is_reward_code": false.
+Si el momento NO contiene un código de recompensa real:
+
+- establece "is_reward_code": false;
+- establece "reward_code": null.
 
 IMPORTANTE:
 
@@ -116,8 +112,9 @@ Para cada candidato devuelve:
 - reason: explicación breve de por qué puede funcionar;
 - title: título corto y atractivo;
 - confidence: confianza de 0 a 1;
-- is_reward_code: true si el momento contiene un código de recompensa
-  o canje útil para otros jugadores, false en caso contrario.
+- is_reward_code: true si contiene un código de recompensa;
+- reward_code: código exacto si puede identificarse con seguridad,
+  o null si no puede identificarse.
 
 Reglas:
 
@@ -137,9 +134,10 @@ Reglas:
 12. No marques como código de recompensa una conversación genérica sobre
     recompensas si no aparece un código o información concreta de canje.
 13. Si el código está incompleto o la transcripción no permite identificarlo
-    con suficiente seguridad, puedes marcar "is_reward_code": true si queda
-    claro que se está mostrando o canjeando un código, pero no inventes las
-    partes que falten.
+    con suficiente seguridad, puedes marcar "is_reward_code": true, pero
+    "reward_code" debe ser null.
+14. Nunca completes o reconstruyas un código que no aparezca claramente
+    en la transcripción.
 
 Devuelve ÚNICAMENTE JSON válido con esta estructura:
 
@@ -153,7 +151,8 @@ Devuelve ÚNICAMENTE JSON válido con esta estructura:
       "reason": "Descripción breve.",
       "title": "Título del clip",
       "confidence": 0.92,
-      "is_reward_code": false
+      "is_reward_code": false,
+      "reward_code": null
     }
   ]
 }
@@ -521,6 +520,22 @@ def normalize_candidates(
             is True
         )
 
+        reward_code = candidate.get(
+            "reward_code"
+        )
+
+        if reward_code is not None:
+            reward_code = str(
+                reward_code
+            ).strip()
+
+            if not reward_code:
+                reward_code = None
+
+        normalized_candidate["reward_code"] = (
+            reward_code
+        )
+
         normalized_candidate["duration"] = round(
             (
                 normalized_candidate["end"]
@@ -545,7 +560,10 @@ def remove_duplicate_candidates(
     candidates = sorted(
         candidates,
         key=lambda candidate: (
-            candidate["is_reward_code"],
+            candidate.get(
+                "is_reward_code",
+                False,
+            ),
             candidate["score"],
             candidate["confidence"],
         ),
@@ -582,7 +600,10 @@ def remove_duplicate_candidates(
 
     selected.sort(
         key=lambda candidate: (
-            candidate["is_reward_code"],
+            candidate.get(
+                "is_reward_code",
+                False,
+            ),
             candidate["score"],
             candidate["confidence"],
         ),
@@ -753,6 +774,15 @@ def main() -> int:
             )
         )
 
+        reward_code_candidates = sum(
+            1
+            for candidate in deduplicated_candidates
+            if candidate.get(
+                "is_reward_code",
+                False,
+            )
+        )
+
         statistics = {
             "vod_id": VOD_ID,
             "transcription_segments": len(
@@ -766,11 +796,7 @@ def main() -> int:
             "final_candidates": len(
                 deduplicated_candidates
             ),
-            "reward_code_candidates": sum(
-                1
-                for candidate in deduplicated_candidates
-                if candidate["is_reward_code"]
-            ),
+            "reward_code_candidates": reward_code_candidates,
             "model": MODEL_NAME,
         }
 
@@ -804,7 +830,7 @@ def main() -> int:
 
         print(
             f"Reward-code candidates: "
-            f"{statistics['reward_code_candidates']}"
+            f"{reward_code_candidates}"
         )
 
         print(
