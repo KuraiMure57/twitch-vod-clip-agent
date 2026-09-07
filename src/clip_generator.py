@@ -44,7 +44,6 @@ def find_vod() -> Path:
 def find_candidates_file(
     vod_id: str,
 ) -> Path:
-
     if not CANDIDATES_DIR.exists():
         raise FileNotFoundError(
             "Filtered candidates directory not found: "
@@ -68,7 +67,6 @@ def find_candidates_file(
 def load_candidates(
     input_file: Path,
 ) -> list[dict]:
-
     with input_file.open(
         "r",
         encoding="utf-8",
@@ -95,7 +93,6 @@ def validate_candidate(
     candidate: dict,
     index: int,
 ) -> None:
-
     required_fields = [
         "start",
         "end",
@@ -132,11 +129,18 @@ def validate_candidate(
             f"{start} -> {end}."
         )
 
+    duration = end - start
+
+    if duration > 180:
+        raise RuntimeError(
+            f"Candidate #{index} exceeds the maximum "
+            f"clip duration of 180 seconds: {duration:.2f}s."
+        )
+
 
 def sanitize_filename(
     text: str,
 ) -> str:
-
     allowed = (
         "abcdefghijklmnopqrstuvwxyz"
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -165,7 +169,6 @@ def generate_clip(
     vod_file: Path,
     output_dir: Path,
 ) -> Path:
-
     start = float(
         candidate["start"]
     )
@@ -225,6 +228,24 @@ def generate_clip(
         f"{candidate['title']}"
     )
 
+    if candidate.get(
+        "is_reward_code",
+        False,
+    ):
+        print(
+            "  Reward code: detected"
+        )
+
+        reward_code = candidate.get(
+            "reward_code"
+        )
+
+        if reward_code:
+            print(
+                f"  Reward code value: "
+                f"{reward_code}"
+            )
+
     subprocess.run(
         [
             "ffmpeg",
@@ -263,6 +284,54 @@ def generate_clip(
         )
 
     return output_file
+
+
+def build_manifest_clip(
+    candidate: dict,
+    index: int,
+    output_file: Path,
+) -> dict:
+    result = {
+        "index": index,
+        "file": str(output_file),
+        "start": float(
+            candidate["start"]
+        ),
+        "end": float(
+            candidate["end"]
+        ),
+        "duration": round(
+            float(candidate["end"])
+            - float(candidate["start"]),
+            2,
+        ),
+        "score": float(
+            candidate["score"]
+        ),
+        "category": candidate[
+            "category"
+        ],
+        "title": candidate[
+            "title"
+        ],
+        "reason": candidate[
+            "reason"
+        ],
+        "confidence": float(
+            candidate["confidence"]
+        ),
+        "is_reward_code": bool(
+            candidate.get(
+                "is_reward_code",
+                False,
+            )
+        ),
+        "reward_code": candidate.get(
+            "reward_code"
+        ),
+    }
+
+    return result
 
 
 def main() -> int:
@@ -373,36 +442,11 @@ def main() -> int:
             )
 
             generated_clips.append(
-                {
-                    "index": index,
-                    "file": str(output_file),
-                    "start": float(
-                        candidate["start"]
-                    ),
-                    "end": float(
-                        candidate["end"]
-                    ),
-                    "duration": round(
-                        float(candidate["end"])
-                        - float(candidate["start"]),
-                        2,
-                    ),
-                    "score": float(
-                        candidate["score"]
-                    ),
-                    "category": candidate[
-                        "category"
-                    ],
-                    "title": candidate[
-                        "title"
-                    ],
-                    "reason": candidate[
-                        "reason"
-                    ],
-                    "confidence": float(
-                        candidate["confidence"]
-                    ),
-                }
+                build_manifest_clip(
+                    candidate,
+                    index,
+                    output_file,
+                )
             )
 
         manifest_file = (
@@ -437,6 +481,11 @@ def main() -> int:
         print(
             f"Clips generated: "
             f"{len(generated_clips)}"
+        )
+
+        print(
+            f"Reward-code clips: "
+            f"{sum(1 for clip in generated_clips if clip.get('is_reward_code'))}"
         )
 
         print(
