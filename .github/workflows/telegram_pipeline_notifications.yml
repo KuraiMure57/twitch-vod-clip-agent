@@ -13,13 +13,10 @@ permissions:
 
 jobs:
   notify:
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
-      # ============================================================
-      # DESCARGAR RESULTADOS DEL WORKFLOW PRINCIPAL
-      # ============================================================
-
       - name: Download Gemini analysis
         uses: actions/download-artifact@v4
         with:
@@ -35,10 +32,6 @@ jobs:
           path: data/filtered_candidates
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-
-      # ============================================================
-      # ANALIZAR RESULTADOS
-      # ============================================================
 
       - name: Determine notification
         id: notification
@@ -57,11 +50,15 @@ jobs:
           )
 
           if not analysis_files:
-              print("ERROR: Gemini analysis file not found.")
+              print(
+                  "ERROR: Gemini analysis file not found."
+              )
               raise SystemExit(1)
 
           if not filtered_files:
-              print("ERROR: Filtered candidates file not found.")
+              print(
+                  "ERROR: Filtered candidates file not found."
+              )
               raise SystemExit(1)
 
           with open(
@@ -78,14 +75,16 @@ jobs:
           ) as file:
               filtered_data = json.load(file)
 
-          # --------------------------------------------------------
-          # Gemini candidates
-          # --------------------------------------------------------
-
-          if isinstance(analysis_data, list):
+          if isinstance(
+              analysis_data,
+              list,
+          ):
               gemini_candidates = analysis_data
 
-          elif isinstance(analysis_data, dict):
+          elif isinstance(
+              analysis_data,
+              dict,
+          ):
               gemini_candidates = (
                   analysis_data.get("candidates")
                   or analysis_data.get("clips")
@@ -95,14 +94,16 @@ jobs:
           else:
               gemini_candidates = []
 
-          # --------------------------------------------------------
-          # Filtered candidates
-          # --------------------------------------------------------
-
-          if isinstance(filtered_data, list):
+          if isinstance(
+              filtered_data,
+              list,
+          ):
               selected_candidates = filtered_data
 
-          elif isinstance(filtered_data, dict):
+          elif isinstance(
+              filtered_data,
+              dict,
+          ):
               selected_candidates = (
                   filtered_data.get("selected_candidates")
                   or filtered_data.get("candidates")
@@ -113,8 +114,13 @@ jobs:
           else:
               selected_candidates = []
 
-          gemini_count = len(gemini_candidates)
-          selected_count = len(selected_candidates)
+          gemini_count = len(
+              gemini_candidates
+          )
+
+          selected_count = len(
+              selected_candidates
+          )
 
           print(
               f"Gemini candidates: {gemini_count}"
@@ -123,10 +129,6 @@ jobs:
           print(
               f"Selected candidates: {selected_count}"
           )
-
-          # --------------------------------------------------------
-          # Construir mensaje
-          # --------------------------------------------------------
 
           if gemini_count == 0:
               message = (
@@ -154,8 +156,6 @@ jobs:
               )
 
           else:
-              # Si existen clips válidos, no enviamos una
-              # notificación de "ningún clip".
               message = ""
 
           with open(
@@ -173,19 +173,21 @@ jobs:
               file.write(
                   f"gemini_count={gemini_count}\n"
               )
+
               file.write(
                   f"selected_count={selected_count}\n"
               )
+
               file.write(
                   "should_notify="
-                  + ("true" if message else "false")
+                  + (
+                      "true"
+                      if message
+                      else "false"
+                  )
                   + "\n"
               )
           PY
-
-      # ============================================================
-      # ENVIAR NOTIFICACIÓN A TELEGRAM
-      # ============================================================
 
       - name: Send notification to Telegram
         if: steps.notification.outputs.should_notify == 'true'
@@ -199,8 +201,13 @@ jobs:
           import urllib.parse
           import urllib.request
 
-          bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
-          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+          bot_token = os.environ[
+              "TELEGRAM_BOT_TOKEN"
+          ]
+
+          chat_id = os.environ[
+              "TELEGRAM_CHAT_ID"
+          ]
 
           with open(
               "notification.txt",
@@ -213,11 +220,11 @@ jobs:
               {
                   "chat_id": chat_id,
                   "text": text,
-          }
+              }
           )
 
           url = (
-              f"https://api.telegram.org/"
+              "https://api.telegram.org/"
               f"bot{bot_token}/sendMessage?"
               f"{params}"
           )
