@@ -45,7 +45,6 @@ def get_config() -> tuple[str, str]:
     return bot_token, chat_id
 
 
-# CAMBIO AQUÍ: Ahora devuelve una lista con todos los manifiestos ordenados
 def find_all_manifests() -> list[Path]:
     if not MANIFEST_DIR.exists():
         raise FileNotFoundError(
@@ -143,7 +142,126 @@ def verify_bot(
     )
 
 
-def build_caption(
+def is_reward_code_clip(
+    clip: dict,
+) -> bool:
+    value = clip.get(
+        "is_reward_code",
+        False,
+    )
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, str):
+        return value.strip().lower() in {
+            "true",
+            "1",
+            "yes",
+            "si",
+            "sí",
+        }
+
+    return bool(value)
+
+
+def get_reward_code(
+    clip: dict,
+) -> str | None:
+    possible_fields = (
+        "reward_code",
+        "code",
+        "redeem_code",
+        "promo_code",
+    )
+
+    for field in possible_fields:
+        value = clip.get(field)
+
+        if value is None:
+            continue
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        value = value.strip()
+
+        if value:
+            return value
+
+    return None
+
+
+def build_reward_code_caption(
+    vod_id: str,
+    clip: dict,
+) -> str:
+    reward_code = get_reward_code(
+        clip
+    )
+
+    title = clip.get(
+        "title",
+        "Código de recompensa",
+    )
+
+    reason = clip.get(
+        "reason",
+        "",
+    )
+
+    lines = [
+        "🎁 CÓDIGO DE RECOMPENSA",
+        "",
+        f"📌 {title}",
+        "",
+    ]
+
+    if reward_code:
+        lines.extend(
+            [
+                "🎟️ Código:",
+                f"`{reward_code}`",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "🎟️ Código de recompensa detectado en este clip.",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "⚠️ Canjéalo cuanto antes por si caduca.",
+            "",
+            f"VOD: {vod_id}",
+            f"Clip #{clip.get('index', '?')}",
+            f"⏱️ Duración: {clip.get('duration', '?')}s",
+        ]
+    )
+
+    if reason:
+        lines.extend(
+            [
+                "",
+                reason,
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "¿Este clip sirve?",
+        ]
+    )
+
+    return "\n".join(lines)
+
+
+def build_normal_caption(
     vod_id: str,
     clip: dict,
 ) -> str:
@@ -157,6 +275,22 @@ def build_caption(
         f"⏱️ Duración: {clip['duration']}s\n\n"
         f"{clip['reason']}\n\n"
         f"¿Este clip sirve?"
+    )
+
+
+def build_caption(
+    vod_id: str,
+    clip: dict,
+) -> str:
+    if is_reward_code_clip(clip):
+        return build_reward_code_caption(
+            vod_id,
+            clip,
+        )
+
+    return build_normal_caption(
+        vod_id,
+        clip,
     )
 
 
@@ -198,6 +332,44 @@ def get_video_duration(
     return duration
 
 
+def run_ffmpeg_compression(
+    input_file: Path,
+    output_file: Path,
+    video_bitrate_kbps: int,
+    scale_filter: str,
+) -> None:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(input_file),
+            "-vf",
+            scale_filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-b:v",
+            f"{video_bitrate_kbps}k",
+            "-maxrate",
+            f"{video_bitrate_kbps}k",
+            "-bufsize",
+            f"{video_bitrate_kbps * 2}k",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-movflags",
+            "+faststart",
+            str(output_file),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+
+
 def compress_clip_for_telegram(
     clip_file: Path,
 ) -> Path:
@@ -215,8 +387,8 @@ def compress_clip_for_telegram(
         clip_file
     )
 
-    # Objetivo de aproximadamente 42 MB para dejar
-    # margen de seguridad al límite de Telegram.
+    # Objetivo inicial de aproximadamente 42 MB
+    # para dejar margen respecto al límite de Telegram.
     target_size_bytes = (
         42 * 1024 * 1024
     )
@@ -225,7 +397,6 @@ def compress_clip_for_telegram(
         target_size_bytes * 8
     )
 
-    # Reservamos bitrate para el audio.
     audio_bitrate_kbps = 96
 
     total_bitrate_kbps = (
@@ -239,7 +410,6 @@ def compress_clip_for_telegram(
         - audio_bitrate_kbps
     )
 
-    # Evitamos bitrates absurdamente bajos.
     video_bitrate_kbps = max(
         400,
         int(video_bitrate_kbps),
@@ -270,47 +440,36 @@ def compress_clip_for_telegram(
         f"{output_file}"
     )
 
-    # ESTRATEGIA: Mantenemos 1080p (solo forzamos enteros en ancho/alto)
-    # Si el bitrate calculado es muy bajo (<1200 kbps), bajamos a 720p para evitar pixelado
+    # Si el bitrate necesario es bajo, usamos 720p.
+    # No reducimos la duración del clip.
     if video_bitrate_kbps < 1200:
-        scale_filter = "scale=w=1280:h=720:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2"
-        print("  [Compresión] Bitrate bajo detectado para la duración. Escalando a 720p para preservar nitidez.")
+        scale_filter = (
+            "scale=w=1280:h=720:"
+            "force_original_aspect_ratio=decrease,"
+            "pad=ceil(iw/2)*2:ceil(ih/2)*2"
+        )
+
+        print(
+            "  [Compresión] Bitrate bajo detectado. "
+            "Escalando a 720p."
+        )
     else:
-        scale_filter = "scale=ceil(iw/2)*2:ceil(ih/2)*2"
-        print("  [Compresión] Bitrate óptimo. Manteniendo resolución original en la compresión.")
+        scale_filter = (
+            "scale=ceil(iw/2)*2:"
+            "ceil(ih/2)*2"
+        )
 
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(clip_file),
-            "-vf",
-            scale_filter,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-b:v",
-            f"{video_bitrate_kbps}k",
-            "-maxrate",
-            f"{video_bitrate_kbps}k",
-            "-bufsize",
-            f"{video_bitrate_kbps * 2}k",
-            "-c:a",
-            "aac",
-            "-b:a",
-            f"{audio_bitrate_kbps}k",
-            "-movflags",
-            "+faststart",
-            str(output_file),
-        ],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        print(
+            "  [Compresión] Bitrate óptimo. "
+            "Manteniendo resolución original."
+        )
+
+    run_ffmpeg_compression(
+        clip_file,
+        output_file,
+        video_bitrate_kbps,
+        scale_filter,
     )
-
-    return output_file
 
     if not output_file.exists():
         raise RuntimeError(
@@ -318,107 +477,90 @@ def compress_clip_for_telegram(
             f"an output file: {output_file}"
         )
 
-    output_size = output_file.stat().st_size
+    output_size = (
+        output_file.stat().st_size
+    )
 
     print(
         f"  Compressed size: "
         f"{output_size / 1024 / 1024:.2f} MB"
     )
 
-    if output_size > TELEGRAM_MAX_VIDEO_SIZE_BYTES:
-        print(
-            "  Compressed file is still too large. Applying second adaptive pass..."
+    if output_size <= TELEGRAM_MAX_VIDEO_SIZE_BYTES:
+        return output_file
+
+    print(
+        "  Compressed file is still too large. "
+        "Applying second adaptive pass..."
+    )
+
+    second_output = (
+        TELEGRAM_TEMP_DIR
+        / f"{clip_file.stem}_telegram_small.mp4"
+    )
+
+    second_target_size_bytes = (
+        38 * 1024 * 1024
+    )
+
+    second_target_bits = (
+        second_target_size_bytes * 8
+    )
+
+    second_total_bitrate_kbps = (
+        second_target_bits
+        / duration
+        / 1000
+    )
+
+    second_video_bitrate_kbps = max(
+        350,
+        int(
+            second_total_bitrate_kbps
+            - audio_bitrate_kbps
+        ),
+    )
+
+    print(
+        f"  Second video bitrate: "
+        f"{second_video_bitrate_kbps} kbps"
+    )
+
+    second_scale_filter = (
+        "scale=w=1280:h=720:"
+        "force_original_aspect_ratio=decrease,"
+        "pad=ceil(iw/2)*2:ceil(ih/2)*2"
+    )
+
+    run_ffmpeg_compression(
+        clip_file,
+        second_output,
+        second_video_bitrate_kbps,
+        second_scale_filter,
+    )
+
+    if not second_output.exists():
+        raise RuntimeError(
+            "Second Telegram compression failed."
         )
 
-        second_output = (
-            TELEGRAM_TEMP_DIR
-            / f"{clip_file.stem}_telegram_small.mp4"
+    second_size = (
+        second_output.stat().st_size
+    )
+
+    print(
+        f"  Second compressed size: "
+        f"{second_size / 1024 / 1024:.2f} MB"
+    )
+
+    if second_size > TELEGRAM_MAX_VIDEO_SIZE_BYTES:
+        raise RuntimeError(
+            "Unable to compress clip below "
+            f"{TELEGRAM_MAX_VIDEO_SIZE_MB} MB: "
+            f"{clip_file}"
         )
 
-        second_target_size_bytes = (
-            38 * 1024 * 1024
-        )
-
-        second_target_bits = (
-            second_target_size_bytes * 8
-        )
-
-        second_total_bitrate_kbps = (
-            second_target_bits
-            / duration
-            / 1000
-        )
-
-        second_video_bitrate_kbps = max(
-            350,
-            int(
-                second_total_bitrate_kbps
-                - audio_bitrate_kbps
-            ),
-        )
-
-        print(
-            f"  Second video bitrate: "
-            f"{second_video_bitrate_kbps} kbps"
-        )
-
-        # SEGUNDA PASADA: Forzamos escala 720p optimizada en lugar de bajar a 540p pixelado
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(clip_file),
-                "-vf",
-                "scale=w=1280:h=720:force_original_aspect_ratio=decrease,"
-                "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-b:v",
-                f"{second_video_bitrate_kbps}k",
-                "-maxrate",
-                f"{second_video_bitrate_kbps}k",
-                "-bufsize",
-                f"{second_video_bitrate_kbps * 2}k",
-                "-c:a",
-                "aac",
-                "-b:a",
-                f"{audio_bitrate_kbps}k",
-                "-movflags",
-                "+faststart",
-                str(second_output),
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
-
-        if not second_output.exists():
-            raise RuntimeError(
-                "Second Telegram compression failed."
-            )
-
-        second_size = (
-            second_output.stat().st_size
-        )
-
-        print(
-            f"  Second compressed size: "
-            f"{second_size / 1024 / 1024:.2f} MB"
-        )
-
-        if second_size > TELEGRAM_MAX_VIDEO_SIZE_BYTES:
-            raise RuntimeError(
-                "Unable to compress clip below "
-                f"{TELEGRAM_MAX_VIDEO_SIZE_MB} MB: "
-                f"{clip_file}"
-            )
-
-        return second_output
-
-    return output_file
+    return second_output
 
 
 def prepare_clip_for_telegram(
@@ -506,6 +648,11 @@ def send_clip(
     print(
         f"  Title: {clip['title']}"
     )
+
+    if is_reward_code_clip(clip):
+        print(
+            "  Type: reward code"
+        )
 
     telegram_file = prepare_clip_for_telegram(
         clip_file
@@ -616,591 +763,449 @@ def send_all_clips(
     vod_id = str(
         manifest["vod_id"]
     )
+
     clips = manifest.get(
         "clips",
         [],
     )
 
-    # =====================================================
-    # EVALUACIÓN DE CANDIDATOS ANTES DE ENVIAR MENSAJES
-    # =====================================================
-    if not clips:
-        print()
-        print("⚠️ No hay clips para enviar tras aplicar los filtros.")
-        telegram_request(
-            bot_token,
-            "sendMessage",
-            payload={
-                "chat_id": chat_id,
-                "text": (
-                    f"✅ <b>Pipeline de VOD completado</b>\n\n"
-                    f"VOD: {vod_id}\n\n"
-                    f"⚠️ El proceso terminó con éxito, pero <b>ningún clip superó tus filtros mínimos</b> (Score > 70 o duración de 15-180s). No hay vídeos para revisar."
-                ),
-                "parse_mode": "HTML",
-            },
+    if not isinstance(clips, list):
+        raise RuntimeError(
+            "Manifest 'clips' must be a list."
         )
+
+    if not clips:
+        print(
+            "No clips to send to Telegram."
+        )
+
         return {
             "vod_id": vod_id,
-            "sent_clips": [],
+            "sent": [],
+            "sent_count": 0,
+            "failed": [],
+            "failed_count": 0,
         }
 
-    # Si sí hay clips, continúa con el comportamiento normal:
-    print()
-    print("📤 Iniciando envío de clips")
-    print(
-        f"Se van a enviar {len(clips)} vídeos para revisión."
-    )
-    
-    telegram_request(
-        bot_token,
-        "sendMessage",
-        payload={
-            "chat_id": chat_id,
-            "text": (
-                f"✅ <b>Pipeline de VOD completado</b>\n\n"
-                f"VOD: {vod_id}\n\n"
-                f"📤 <b>Iniciando envío de {len(clips)} clips para su revisión.</b>"
-            ),
-            "parse_mode": "HTML",
-        },
-    )
-
-    sent_clips = []
-    for clip in clips:
-        message_id = send_clip(
-            bot_token,
-            chat_id,
-            vod_id,
-            clip,
-        )
-        sent_clips.append(
-            {
-                "index": clip["index"],
-                "message_id": message_id,
-                "status": "pending",
-            }
-        )
-
-    return {
-        "vod_id": vod_id,
-        "sent_clips": sent_clips,
-    }
-
-def save_pending_state(
-    state: dict,
-) -> Path:
     APPROVED_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    vod_id = str(
-        state["vod_id"]
-    )
+    sent = []
+    failed = []
 
-    output_file = (
+    for clip in clips:
+        if not isinstance(clip, dict):
+            print(
+                "Skipping invalid clip entry."
+            )
+
+            continue
+
+        try:
+            message_id = send_clip(
+                bot_token,
+                chat_id,
+                vod_id,
+                clip,
+            )
+
+            sent.append(
+                {
+                    "index": clip.get("index"),
+                    "message_id": message_id,
+                }
+            )
+
+        except Exception as exc:
+            print()
+            print(
+                f"Failed to send clip "
+                f"#{clip.get('index', '?')}: "
+                f"{exc}"
+            )
+
+            failed.append(
+                {
+                    "index": clip.get("index"),
+                    "error": str(exc),
+                }
+            )
+
+    result = {
+        "vod_id": vod_id,
+        "sent": sent,
+        "sent_count": len(sent),
+        "failed": failed,
+        "failed_count": len(failed),
+    }
+
+    result_file = (
         APPROVED_DIR
-        / f"{vod_id}_telegram_state.json"
+        / f"{vod_id}_telegram_send_result.json"
     )
 
-    with output_file.open(
+    with result_file.open(
         "w",
         encoding="utf-8",
     ) as file:
         json.dump(
-            state,
+            result,
             file,
-            indent=2,
             ensure_ascii=False,
+            indent=2,
         )
 
-    return output_file
-
-
-# NUEVA FUNCIÓN COMODÍN: Asegura la creación del JSON final que GitHub Actions necesita validar
-def save_final_approved_json(vod_id: str, approved_clips: list) -> Path:
-    APPROVED_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
+    print()
+    print(
+        "Telegram sending completed."
     )
-    output_file = APPROVED_DIR / f"{vod_id}_approved.json"
-    
-    # Estructura limpia requerida por los pasos subsiguientes
-    final_data = {
-        "vod_id": vod_id,
-        "approved_clips": approved_clips,
-        "timestamp": time.time()
-    }
-    
-    with output_file.open("w", encoding="utf-8") as file:
-        json.dump(final_data, file, indent=2, ensure_ascii=False)
-        
-    print(f"📁 Archivo final de éxitos generado con éxito: {output_file}")
-    return output_file
+
+    print(
+        f"  Sent: {len(sent)}"
+    )
+
+    print(
+        f"  Failed: {len(failed)}"
+    )
+
+    return result
 
 
-def answer_callback(
+def get_updates(
     bot_token: str,
-    callback_id: str,
-    text: str,
+    offset: int | None = None,
+) -> list[dict]:
+    payload = {
+        "timeout": TELEGRAM_LONG_POLL_SECONDS,
+        "allowed_updates": json.dumps(
+            ["callback_query"],
+        ),
+    }
+
+    if offset is not None:
+        payload["offset"] = offset
+
+    result = telegram_request(
+        bot_token,
+        "getUpdates",
+        payload=payload,
+    )
+
+    updates = result.get(
+        "result",
+        [],
+    )
+
+    if not isinstance(updates, list):
+        return []
+
+    return updates
+
+
+def answer_callback_query(
+    bot_token: str,
+    callback_query_id: str,
 ) -> None:
     telegram_request(
         bot_token,
         "answerCallbackQuery",
         payload={
-            "callback_query_id": callback_id,
-            "text": text,
+            "callback_query_id": callback_query_id,
         },
     )
 
 
-def update_message(
-    bot_token: str,
-    chat_id: str,
-    message_id: int,
-    text: str,
-) -> None:
-    telegram_request(
-        bot_token,
-        "editMessageCaption",
-        payload={
-            "chat_id": chat_id,
-            "message_id": str(message_id),
-            "caption": text,
-        },
-    )
-
-
-def poll_for_approvals(
-    bot_token: str,
-    chat_id: str,
-    state: dict,
-) -> dict:
-    print()
-    print(
-        "Waiting for Telegram approvals..."
-    )
-
-    print(
-        "No approval timeout is configured."
-    )
-
-    print(
-        "The workflow will continue only "
-        "after every clip is reviewed."
-    )
-
-    pending = {
-        int(item["index"]): item
-        for item in state["sent_clips"]
-    }
-
-    approved = []
-    rejected = []
-
-    update_id = None
-
-    while pending:
-        params = {
-            "timeout": TELEGRAM_LONG_POLL_SECONDS,
-            "allowed_updates": json.dumps(
-                ["callback_query"]
-            ),
-        }
-
-        if update_id is not None:
-            params["offset"] = update_id
-
-        url = (
-            f"{TELEGRAM_API_URL}/bot"
-            f"{bot_token}/getUpdates"
-        )
-
-        print(
-            f"Waiting for Telegram updates... "
-            f"Pending clips: {len(pending)}"
-        )
-
-        try:
-            response = requests.get(
-                url,
-                params=params,
-                timeout=TELEGRAM_LONG_POLL_SECONDS + 10,
-            )
-
-            response.raise_for_status()
-
-            result = response.json()
-
-        except requests.RequestException as exc:
-            print(
-                "Telegram polling error. "
-                "Retrying instead of stopping the workflow:"
-            )
-            print(
-                f"  {exc}"
-            )
-            continue
-
-        except ValueError as exc:
-            print(
-                "Telegram returned invalid JSON. "
-                "Retrying instead of stopping the workflow:"
-            )
-            print(
-                f"  {exc}"
-            )
-            continue
-
-        if not result.get("ok"):
-            print(
-                "Telegram getUpdates returned an error. "
-                "Retrying instead of stopping the workflow:"
-            )
-            print(
-                f"  {result}"
-            )
-            continue
-
-        updates = result.get(
-            "result",
-            [],
-        )
-
-        for update in updates:
-            update_id = (
-                update["update_id"] + 1
-            )
-
-            callback = update.get(
-                "callback_query"
-            )
-
-            if not callback:
-                continue
-
-            callback_data = callback.get(
-                "data",
-                "",
-            )
-
-            callback_message = callback.get(
-                "message",
-                {},
-            )
-
-            callback_chat = callback_message.get(
-                "chat",
-                {},
-            )
-
-            callback_chat_id = str(
-                callback_chat.get(
-                    "id",
-                    "",
-                )
-            )
-
-            if callback_chat_id != str(
-                chat_id
-            ):
-                continue
-
-            parts = callback_data.split(
-                ":"
-            )
-
-            if len(parts) != 3:
-                continue
-
-            action = parts[0]
-            vod_id = parts[1]
-
-            try:
-                clip_index = int(
-                    parts[2]
-                )
-            except ValueError:
-                continue
-
-            if action not in (
-                "approve",
-                "reject",
-            ):
-                continue
-
-            if clip_index not in pending:
-                print(
-                    f"Ignoring callback for "
-                    f"already processed clip #{clip_index}."
-                )
-                continue
-
-            # Sacamos el clip de pending inmediatamente.
-            # Esto evita procesar dos veces el mismo botón.
-            item = pending.pop(
-                clip_index
-            )
-
-            item["vod_id"] = vod_id
-
-            message_id = int(
-                item["message_id"]
-            )
-
-            if action == "approve":
-                item["status"] = "approved"
-                approved.append(item)
-
-                decision_text = (
-                    "🎬 CLIP DE TWITCH\n\n"
-                    "✅ APROBADO\n\n"
-                    "Este clip pasará al "
-                    "siguiente paso."
-                )
-
-                callback_text = (
-                    "✅ Clip aprobado."
-                )
-
-                print(
-                    f"Clip #{clip_index} "
-                    "APPROVED"
-                )
-
-            else:
-                item["status"] = "rejected"
-                rejected.append(item)
-
-                decision_text = (
-                    "🎬 CLIP DE TWITCH\n\n"
-                    "❌ RECHAZADO"
-                )
-
-                callback_text = (
-                    "❌ Clip rechazado."
-                )
-
-                print(
-                    f"Clip #{clip_index} "
-                    "REJECTED"
-                )
-
-            # Guardamos SIEMPRE la decisión antes de
-            # hacer cualquier otra operación de Telegram.
-            state["approved"] = approved
-            state["rejected"] = rejected
-            state["pending"] = list(
-                pending.values()
-            )
-
-            try:
-                save_pending_state(
-                    state
-                )
-
-                print(
-                    f"  Decision for clip "
-                    f"#{clip_index} saved."
-                )
-
-            except Exception as exc:
-                # La decisión ya está en memoria y
-                # continuamos procesando las demás.
-                print(
-                    "WARNING: Could not save "
-                    "Telegram approval state:"
-                )
-                print(
-                    f"  {exc}"
-                )
-
-            # Confirmamos el botón de Telegram.
-            # Si falla, NO detenemos el workflow.
-            try:
-                answer_callback(
-                    bot_token,
-                    callback["id"],
-                    callback_text,
-                )
-
-            except Exception as exc:
-                print(
-                    f"WARNING: Could not answer "
-                    f"callback for clip #{clip_index}:"
-                )
-                print(
-                    f"  {exc}"
-                )
-
-            # Actualizamos el mensaje.
-            # Si falla, NO detenemos el workflow.
-            try:
-                update_message(
-                    bot_token,
-                    chat_id,
-                    message_id,
-                    decision_text,
-                )
-
-            except Exception as exc:
-                print(
-                    f"WARNING: Could not update "
-                    f"Telegram message for clip #{clip_index}:"
-                )
-                print(
-                    f"  {exc}"
-                )
-
-        if not pending:
-            print()
-            print(
-                "All clips have been reviewed."
-            )
-
-    state["approved"] = approved
-    state["rejected"] = rejected
-    state["pending"] = list(
-        pending.values()
-    )
-
-    state["completed"] = (
-        len(state["pending"]) == 0
-    )
-
-    # Guardado final.
-    try:
-        save_pending_state(
-            state
-        )
-    except Exception as exc:
-        print(
-            "WARNING: Final Telegram state "
-            "could not be saved:"
-        )
-        print(
-            f"  {exc}"
-        )
-
-    return state
-
-
-def save_approval_result(
-    state: dict,
+def copy_approved_clip(
+    vod_id: str,
+    clip_index: int,
+    clip: dict,
 ) -> Path:
+    source_file = Path(
+        clip["file"]
+    )
+
+    if not source_file.exists():
+        raise FileNotFoundError(
+            f"Approved clip source file not found: "
+            f"{source_file}"
+        )
+
     APPROVED_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    vod_id = str(
-        state["vod_id"]
-    )
-
     output_file = (
         APPROVED_DIR
-        / f"{vod_id}_approved.json"
+        / f"{vod_id}_clip_{clip_index}.mp4"
     )
 
-    with output_file.open(
-        "w",
-        encoding="utf-8",
-    ) as file:
-        json.dump(
-            state,
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
+    subprocess.run(
+        [
+            "cp",
+            str(source_file),
+            str(output_file),
+        ],
+        check=True,
+    )
 
     return output_file
 
 
-# CAMBIO AQUÍ: Ahora procesa dinámicamente todos los manifiestos en bucle
+def handle_callback_query(
+    bot_token: str,
+    chat_id: str,
+    callback_query: dict,
+) -> None:
+    callback_query_id = callback_query.get(
+        "id"
+    )
+
+    data = callback_query.get(
+        "data",
+        "",
+    )
+
+    if callback_query_id:
+        answer_callback_query(
+            bot_token,
+            callback_query_id,
+        )
+
+    if not data:
+        return
+
+    parts = data.split(":")
+
+    if len(parts) != 3:
+        print(
+            f"Invalid callback data: {data}"
+        )
+
+        return
+
+    action = parts[0]
+    vod_id = parts[1]
+
+    try:
+        clip_index = int(parts[2])
+    except ValueError:
+        print(
+            f"Invalid clip index: {parts[2]}"
+        )
+
+        return
+
+    manifest_file = (
+        MANIFEST_DIR
+        / vod_id
+        / "clips_manifest.json"
+    )
+
+    if not manifest_file.exists():
+        print(
+            f"Manifest not found: "
+            f"{manifest_file}"
+        )
+
+        return
+
+    manifest = load_manifest(
+        manifest_file
+    )
+
+    clips = manifest.get(
+        "clips",
+        [],
+    )
+
+    clip = None
+
+    for candidate in clips:
+        if not isinstance(candidate, dict):
+            continue
+
+        if candidate.get("index") == clip_index:
+            clip = candidate
+            break
+
+    if clip is None:
+        print(
+            f"Clip #{clip_index} not found "
+            f"in manifest {vod_id}"
+        )
+
+        return
+
+    if action == "approve":
+        approved_file = copy_approved_clip(
+            vod_id,
+            clip_index,
+            clip,
+        )
+
+        print()
+        print(
+            f"✅ Clip #{clip_index} approved."
+        )
+
+        print(
+            f"  Approved file: {approved_file}"
+        )
+
+        return
+
+    if action == "reject":
+        print()
+        print(
+            f"❌ Clip #{clip_index} rejected."
+        )
+
+        return
+
+    print(
+        f"Unknown callback action: {action}"
+    )
+
+
+def listen_for_approvals(
+    bot_token: str,
+    chat_id: str,
+) -> None:
+    print()
+    print(
+        "Starting Telegram approval listener..."
+    )
+
+    offset = None
+
+    while True:
+        try:
+            updates = get_updates(
+                bot_token,
+                offset,
+            )
+
+            for update in updates:
+                update_id = update.get(
+                    "update_id"
+                )
+
+                if update_id is not None:
+                    offset = update_id + 1
+
+                callback_query = update.get(
+                    "callback_query"
+                )
+
+                if not callback_query:
+                    continue
+
+                handle_callback_query(
+                    bot_token,
+                    chat_id,
+                    callback_query,
+                )
+
+        except (
+            requests.Timeout,
+            requests.ConnectionError,
+            TimeoutError,
+            ConnectionResetError,
+            ConnectionAbortedError,
+        ) as exc:
+            print()
+            print(
+                "Telegram listener connection error."
+            )
+
+            print(
+                f"  Error: {exc}"
+            )
+
+            print(
+                "  Retrying..."
+            )
+
+            time.sleep(5)
+
+
 def main() -> int:
     try:
-        print(
-            "========================================="
-        )
-        print(
-            "Telegram Clip Approval (Multi-VOD Loop)"
-        )
-        print(
-            "========================================="
-        )
-
         bot_token, chat_id = get_config()
 
-        # Obtenemos la lista con todas las carpetas de vídeos
-        manifest_files = find_all_manifests()
-        print(f"📚 Se encontraron {len(manifest_files)} vídeos listos para procesar.")
+        verify_bot(
+            bot_token
+        )
 
-        verify_bot(bot_token)
+        manifests = find_all_manifests()
 
-        # Procesamos cada vídeo de forma secuencial, uno detrás de otro
-        for manifest_file in manifest_files:
-            manifest = load_manifest(manifest_file)
-            vod_id = str(manifest["vod_id"])
-            clips = manifest.get("clips", [])
+        total_sent = 0
+        total_failed = 0
 
+        for manifest_file in manifests:
             print()
-            print(f"🎬 PROCESANDO VOD ID: {vod_id}")
-            print(f"   Ruta manifiesto: {manifest_file}")
-            print(f"   Clips para revisar: {len(clips)}")
+            print(
+                "Processing manifest:"
+            )
 
-            if not clips:
-                print("   ⚠️ No hay clips para enviar en este vídeo. Pasando al siguiente.")
-                continue
+            print(
+                f"  {manifest_file}"
+            )
 
-            # Envia los clips de este vídeo concreto
-            state = send_all_clips(
+            manifest = load_manifest(
+                manifest_file
+            )
+
+            result = send_all_clips(
                 bot_token,
                 chat_id,
                 manifest,
             )
 
-            pending_file = save_pending_state(state)
-            print(f"   Pendientes guardados en: {pending_file}")
+            total_sent += result[
+                "sent_count"
+            ]
 
-            # Se detiene aquí a escuchar Telegram hasta que votes TODOS los clips de ESTE vídeo
-            final_state = poll_for_approvals(
-                bot_token,
-                chat_id,
-                state,
-            )
+            total_failed += result[
+                "failed_count"
+            ]
 
-            result_file = save_approval_result(final_state)
-            
-            # Forzamos la creación del archivo esperado por GitHub Actions
-            save_final_approved_json(vod_id, final_state.get("approved", []))
+        print()
+        print(
+            "All manifests processed."
+        )
 
-            print()
-            print(f"✅ VOD {vod_id} completado con éxito.")
-            print(f"   Aprobados: {len(final_state['approved'])} | Rechazados: {len(final_state['rejected'])}")
-            print(f"   Resultado guardado en: {result_file}")
-            print("=========================================")
+        print(
+            f"  Total sent: {total_sent}"
+        )
 
-        print("\n🎉 ¡Todos los vídeos y clips en cola han sido revisados correctamente!")
+        print(
+            f"  Total failed: {total_failed}"
+        )
+
         return 0
 
-    except requests.RequestException as exc:
+    except KeyboardInterrupt:
+        print()
         print(
-            f"Telegram HTTP error: {exc}",
-            file=sys.stderr,
+            "Telegram approval stopped."
         )
-        return 1
+
+        return 130
 
     except Exception as exc:
+        print()
         print(
-            f"ERROR: {exc}",
-            file=sys.stderr,
+            f"Telegram approval failed: {exc}"
         )
+
         return 1
 
 
-# DISPARADOR DE EJECUCIÓN PRINCIPAL
 if __name__ == "__main__":
-    raise SystemExit(
+    sys.exit(
         main()
     )
