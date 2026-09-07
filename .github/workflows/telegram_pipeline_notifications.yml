@@ -1,1 +1,241 @@
+name: Telegram Pipeline Notifications
 
+on:
+  workflow_run:
+    workflows:
+      - Complete VOD Pipeline Test
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ============================================================
+      # DESCARGAR RESULTADOS DEL WORKFLOW PRINCIPAL
+      # ============================================================
+
+      - name: Download Gemini analysis
+        uses: actions/download-artifact@v4
+        with:
+          name: gemini-analysis-complete-test
+          path: data/analysis
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download filtered candidates
+        uses: actions/download-artifact@v4
+        with:
+          name: filtered-candidates-test
+          path: data/filtered_candidates
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      # ============================================================
+      # ANALIZAR RESULTADOS
+      # ============================================================
+
+      - name: Determine notification
+        id: notification
+        run: |
+          python3 - <<'PY'
+          import glob
+          import json
+          import os
+
+          analysis_files = glob.glob(
+              "data/analysis/*_candidates.json"
+          )
+
+          filtered_files = glob.glob(
+              "data/filtered_candidates/*_selected.json"
+          )
+
+          if not analysis_files:
+              print("ERROR: Gemini analysis file not found.")
+              raise SystemExit(1)
+
+          if not filtered_files:
+              print("ERROR: Filtered candidates file not found.")
+              raise SystemExit(1)
+
+          with open(
+              analysis_files[0],
+              "r",
+              encoding="utf-8",
+          ) as file:
+              analysis_data = json.load(file)
+
+          with open(
+              filtered_files[0],
+              "r",
+              encoding="utf-8",
+          ) as file:
+              filtered_data = json.load(file)
+
+          # --------------------------------------------------------
+          # Gemini candidates
+          # --------------------------------------------------------
+
+          if isinstance(analysis_data, list):
+              gemini_candidates = analysis_data
+
+          elif isinstance(analysis_data, dict):
+              gemini_candidates = (
+                  analysis_data.get("candidates")
+                  or analysis_data.get("clips")
+                  or []
+              )
+
+          else:
+              gemini_candidates = []
+
+          # --------------------------------------------------------
+          # Filtered candidates
+          # --------------------------------------------------------
+
+          if isinstance(filtered_data, list):
+              selected_candidates = filtered_data
+
+          elif isinstance(filtered_data, dict):
+              selected_candidates = (
+                  filtered_data.get("selected_candidates")
+                  or filtered_data.get("candidates")
+                  or filtered_data.get("clips")
+                  or []
+              )
+
+          else:
+              selected_candidates = []
+
+          gemini_count = len(gemini_candidates)
+          selected_count = len(selected_candidates)
+
+          print(
+              f"Gemini candidates: {gemini_count}"
+          )
+
+          print(
+              f"Selected candidates: {selected_count}"
+          )
+
+          # --------------------------------------------------------
+          # Construir mensaje
+          # --------------------------------------------------------
+
+          if gemini_count == 0:
+              message = (
+                  "🔎 Análisis completado\n\n"
+                  "No se han encontrado momentos interesantes\n"
+                  "para generar clips en este VOD.\n\n"
+                  "El proceso ha terminado."
+              )
+
+          elif selected_count == 0:
+              candidate_word = (
+                  "candidato"
+                  if gemini_count == 1
+                  else "candidatos"
+              )
+
+              message = (
+                  "🔎 Análisis completado\n\n"
+                  f"Gemini encontró {gemini_count} "
+                  f"{candidate_word}, pero ninguno cumple\n"
+                  "los criterios para generar un clip.\n\n"
+                  f"Candidatos encontrados: {gemini_count}\n"
+                  f"Clips válidos: {selected_count}\n\n"
+                  "El proceso ha terminado."
+              )
+
+          else:
+              # Si existen clips válidos, no enviamos una
+              # notificación de "ningún clip".
+              message = ""
+
+          with open(
+              "notification.txt",
+              "w",
+              encoding="utf-8",
+          ) as file:
+              file.write(message)
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a",
+              encoding="utf-8",
+          ) as file:
+              file.write(
+                  f"gemini_count={gemini_count}\n"
+              )
+              file.write(
+                  f"selected_count={selected_count}\n"
+              )
+              file.write(
+                  "should_notify="
+                  + ("true" if message else "false")
+                  + "\n"
+              )
+          PY
+
+      # ============================================================
+      # ENVIAR NOTIFICACIÓN A TELEGRAM
+      # ============================================================
+
+      - name: Send notification to Telegram
+        if: steps.notification.outputs.should_notify == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          with open(
+              "notification.txt",
+              "r",
+              encoding="utf-8",
+          ) as file:
+              text = file.read()
+
+          params = urllib.parse.urlencode(
+              {
+                  "chat_id": chat_id,
+                  "text": text,
+          }
+          )
+
+          url = (
+              f"https://api.telegram.org/"
+              f"bot{bot_token}/sendMessage?"
+              f"{params}"
+          )
+
+          with urllib.request.urlopen(
+              url,
+              timeout=30,
+          ) as response:
+              data = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          if not data.get("ok"):
+              raise RuntimeError(
+                  f"Telegram API error: {data}"
+              )
+
+          print(
+              "Telegram notification sent successfully."
+          )
+          PY
