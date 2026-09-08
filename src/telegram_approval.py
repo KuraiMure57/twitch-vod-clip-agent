@@ -16,14 +16,11 @@ TELEGRAM_TEMP_DIR = Path("data/telegram_temp")
 
 TELEGRAM_LONG_POLL_SECONDS = 30
 
-# Dejamos margen respecto al límite de Telegram.
 TELEGRAM_MAX_VIDEO_SIZE_MB = 45
 TELEGRAM_MAX_VIDEO_SIZE_BYTES = (
     TELEGRAM_MAX_VIDEO_SIZE_MB * 1024 * 1024
 )
 
-# Reintentos de subida ante errores temporales de red.
-# No existe límite de intentos.
 TELEGRAM_UPLOAD_RETRY_INITIAL_SECONDS = 5
 TELEGRAM_UPLOAD_RETRY_MAX_SECONDS = 60
 
@@ -125,7 +122,10 @@ def verify_bot(
         "getMe",
     )
 
-    bot = result.get("result", {})
+    bot = result.get(
+        "result",
+        {},
+    )
 
     print(
         "Telegram bot verified:"
@@ -387,8 +387,6 @@ def compress_clip_for_telegram(
         clip_file
     )
 
-    # Objetivo inicial de aproximadamente 42 MB
-    # para dejar margen respecto al límite de Telegram.
     target_size_bytes = (
         42 * 1024 * 1024
     )
@@ -405,63 +403,24 @@ def compress_clip_for_telegram(
         / 1000
     )
 
-    video_bitrate_kbps = (
-        total_bitrate_kbps
-        - audio_bitrate_kbps
-    )
-
     video_bitrate_kbps = max(
         400,
-        int(video_bitrate_kbps),
+        int(
+            total_bitrate_kbps
+            - audio_bitrate_kbps
+        ),
     )
 
-    print()
-    print(
-        "Clip exceeds Telegram upload limit."
-    )
-
-    print(
-        f"  Original: "
-        f"{clip_file.stat().st_size / 1024 / 1024:.2f} MB"
-    )
-
-    print(
-        f"  Duration: "
-        f"{duration:.2f}s"
-    )
-
-    print(
-        f"  Target video bitrate: "
-        f"{video_bitrate_kbps} kbps"
-    )
-
-    print(
-        f"  Output: "
-        f"{output_file}"
-    )
-
-    # Si el bitrate necesario es bajo, usamos 720p.
-    # No reducimos la duración del clip.
     if video_bitrate_kbps < 1200:
         scale_filter = (
             "scale=w=1280:h=720:"
             "force_original_aspect_ratio=decrease,"
             "pad=ceil(iw/2)*2:ceil(ih/2)*2"
         )
-
-        print(
-            "  [Compresión] Bitrate bajo detectado. "
-            "Escalando a 720p."
-        )
     else:
         scale_filter = (
             "scale=ceil(iw/2)*2:"
             "ceil(ih/2)*2"
-        )
-
-        print(
-            "  [Compresión] Bitrate óptimo. "
-            "Manteniendo resolución original."
         )
 
     run_ffmpeg_compression(
@@ -477,22 +436,10 @@ def compress_clip_for_telegram(
             f"an output file: {output_file}"
         )
 
-    output_size = (
-        output_file.stat().st_size
-    )
-
-    print(
-        f"  Compressed size: "
-        f"{output_size / 1024 / 1024:.2f} MB"
-    )
+    output_size = output_file.stat().st_size
 
     if output_size <= TELEGRAM_MAX_VIDEO_SIZE_BYTES:
         return output_file
-
-    print(
-        "  Compressed file is still too large. "
-        "Applying second adaptive pass..."
-    )
 
     second_output = (
         TELEGRAM_TEMP_DIR
@@ -521,11 +468,6 @@ def compress_clip_for_telegram(
         ),
     )
 
-    print(
-        f"  Second video bitrate: "
-        f"{second_video_bitrate_kbps} kbps"
-    )
-
     second_scale_filter = (
         "scale=w=1280:h=720:"
         "force_original_aspect_ratio=decrease,"
@@ -544,14 +486,7 @@ def compress_clip_for_telegram(
             "Second Telegram compression failed."
         )
 
-    second_size = (
-        second_output.stat().st_size
-    )
-
-    print(
-        f"  Second compressed size: "
-        f"{second_size / 1024 / 1024:.2f} MB"
-    )
+    second_size = second_output.stat().st_size
 
     if second_size > TELEGRAM_MAX_VIDEO_SIZE_BYTES:
         raise RuntimeError(
@@ -566,28 +501,11 @@ def compress_clip_for_telegram(
 def prepare_clip_for_telegram(
     clip_file: Path,
 ) -> Path:
-    file_size = clip_file.stat().st_size
-
-    file_size_mb = (
-        file_size / 1024 / 1024
-    )
-
-    print(
-        f"  File size: "
-        f"{file_size_mb:.2f} MB"
-    )
-
-    if file_size <= TELEGRAM_MAX_VIDEO_SIZE_BYTES:
-        print(
-            "  Size is within Telegram limit."
-        )
-
+    if (
+        clip_file.stat().st_size
+        <= TELEGRAM_MAX_VIDEO_SIZE_BYTES
+    ):
         return clip_file
-
-    print(
-        f"  Size exceeds "
-        f"{TELEGRAM_MAX_VIDEO_SIZE_MB} MB."
-    )
 
     return compress_clip_for_telegram(
         clip_file
@@ -635,34 +553,9 @@ def send_clip(
         ]
     }
 
-    print()
-    print(
-        f"Sending clip #{clip['index']} "
-        f"to Telegram..."
-    )
-
-    print(
-        f"  File: {clip_file}"
-    )
-
-    print(
-        f"  Title: {clip['title']}"
-    )
-
-    if is_reward_code_clip(clip):
-        print(
-            "  Type: reward code"
-        )
-
     telegram_file = prepare_clip_for_telegram(
         clip_file
     )
-
-    if telegram_file != clip_file:
-        print(
-            f"  Telegram upload file: "
-            f"{telegram_file}"
-        )
 
     retry_delay = (
         TELEGRAM_UPLOAD_RETRY_INITIAL_SECONDS
@@ -673,9 +566,8 @@ def send_clip(
     while True:
         attempt += 1
 
-        print()
         print(
-            f"  Telegram upload attempt #{attempt}"
+            f"Telegram upload attempt #{attempt}"
         )
 
         try:
@@ -703,24 +595,16 @@ def send_clip(
                     },
                 )
 
-            message = result.get(
-                "result",
-                {},
-            )
-
-            message_id = message.get(
-                "message_id"
+            message_id = (
+                result
+                .get("result", {})
+                .get("message_id")
             )
 
             if not message_id:
                 raise RuntimeError(
                     "Telegram did not return a message_id."
                 )
-
-            print(
-                f"  Telegram message ID: "
-                f"{message_id}"
-            )
 
             return int(message_id)
 
@@ -731,18 +615,13 @@ def send_clip(
             ConnectionResetError,
             ConnectionAbortedError,
         ) as exc:
-            print()
             print(
-                "  Telegram upload connection error."
+                "Telegram upload connection error: "
+                f"{exc}"
             )
 
             print(
-                f"  Error: {exc}"
-            )
-
-            print(
-                f"  Retrying in "
-                f"{retry_delay} seconds..."
+                f"Retrying in {retry_delay} seconds..."
             )
 
             time.sleep(
@@ -755,122 +634,26 @@ def send_clip(
             )
 
 
-def send_all_clips(
+def send_status_message(
     bot_token: str,
     chat_id: str,
-    manifest: dict,
-) -> dict:
-    vod_id = str(
-        manifest["vod_id"]
+    vod_id: str,
+    clips: list[dict],
+) -> None:
+    count = len(clips)
+
+    telegram_request(
+        bot_token,
+        "sendMessage",
+        payload={
+            "chat_id": chat_id,
+            "text": (
+                "📤 Iniciando envío de clips\n\n"
+                f"Se van a enviar {count} "
+                "vídeos para revisión"
+            ),
+        },
     )
-
-    clips = manifest.get(
-        "clips",
-        [],
-    )
-
-    if not isinstance(clips, list):
-        raise RuntimeError(
-            "Manifest 'clips' must be a list."
-        )
-
-    if not clips:
-        print(
-            "No clips to send to Telegram."
-        )
-
-        return {
-            "vod_id": vod_id,
-            "sent": [],
-            "sent_count": 0,
-            "failed": [],
-            "failed_count": 0,
-        }
-
-    APPROVED_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    sent = []
-    failed = []
-
-    for clip in clips:
-        if not isinstance(clip, dict):
-            print(
-                "Skipping invalid clip entry."
-            )
-
-            continue
-
-        try:
-            message_id = send_clip(
-                bot_token,
-                chat_id,
-                vod_id,
-                clip,
-            )
-
-            sent.append(
-                {
-                    "index": clip.get("index"),
-                    "message_id": message_id,
-                }
-            )
-
-        except Exception as exc:
-            print()
-            print(
-                f"Failed to send clip "
-                f"#{clip.get('index', '?')}: "
-                f"{exc}"
-            )
-
-            failed.append(
-                {
-                    "index": clip.get("index"),
-                    "error": str(exc),
-                }
-            )
-
-    result = {
-        "vod_id": vod_id,
-        "sent": sent,
-        "sent_count": len(sent),
-        "failed": failed,
-        "failed_count": len(failed),
-    }
-
-    result_file = (
-        APPROVED_DIR
-        / f"{vod_id}_telegram_send_result.json"
-    )
-
-    with result_file.open(
-        "w",
-        encoding="utf-8",
-    ) as file:
-        json.dump(
-            result,
-            file,
-            ensure_ascii=False,
-            indent=2,
-        )
-
-    print()
-    print(
-        "Telegram sending completed."
-    )
-
-    print(
-        f"  Sent: {len(sent)}"
-    )
-
-    print(
-        f"  Failed: {len(failed)}"
-    )
-
-    return result
 
 
 def get_updates(
@@ -880,7 +663,7 @@ def get_updates(
     payload = {
         "timeout": TELEGRAM_LONG_POLL_SECONDS,
         "allowed_updates": json.dumps(
-            ["callback_query"],
+            ["callback_query"]
         ),
     }
 
@@ -893,15 +676,10 @@ def get_updates(
         payload=payload,
     )
 
-    updates = result.get(
+    return result.get(
         "result",
         [],
     )
-
-    if not isinstance(updates, list):
-        return []
-
-    return updates
 
 
 def answer_callback_query(
@@ -954,134 +732,174 @@ def copy_approved_clip(
     return output_file
 
 
-def handle_callback_query(
+def edit_telegram_message(
     bot_token: str,
     chat_id: str,
-    callback_query: dict,
+    message_id: int,
+    text: str,
 ) -> None:
-    callback_query_id = callback_query.get(
-        "id"
+    telegram_request(
+        bot_token,
+        "editMessageCaption",
+        payload={
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "caption": text,
+        },
     )
-
-    data = callback_query.get(
-        "data",
-        "",
-    )
-
-    if callback_query_id:
-        answer_callback_query(
-            bot_token,
-            callback_query_id,
-        )
-
-    if not data:
-        return
-
-    parts = data.split(":")
-
-    if len(parts) != 3:
-        print(
-            f"Invalid callback data: {data}"
-        )
-
-        return
-
-    action = parts[0]
-    vod_id = parts[1]
 
     try:
-        clip_index = int(parts[2])
-    except ValueError:
+        telegram_request(
+            bot_token,
+            "editMessageReplyMarkup",
+            payload={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reply_markup": json.dumps(
+                    {
+                        "inline_keyboard": []
+                    }
+                ),
+            },
+        )
+    except Exception as exc:
         print(
-            f"Invalid clip index: {parts[2]}"
+            "Could not remove Telegram keyboard: "
+            f"{exc}"
         )
 
-        return
 
-    manifest_file = (
-        MANIFEST_DIR
-        / vod_id
-        / "clips_manifest.json"
+def build_reviewed_caption(
+    vod_id: str,
+    clip: dict,
+    status: str,
+) -> str:
+    base_caption = build_caption(
+        vod_id,
+        clip,
     )
 
-    if not manifest_file.exists():
-        print(
-            f"Manifest not found: "
-            f"{manifest_file}"
+    if status == "approved":
+        return (
+            "✅ APROBADO\n\n"
+            + base_caption
         )
 
-        return
-
-    manifest = load_manifest(
-        manifest_file
+    return (
+        "❌ RECHAZADO\n\n"
+        + base_caption
     )
 
-    clips = manifest.get(
-        "clips",
-        [],
+
+def write_approval_files(
+    vod_id: str,
+    states: dict[int, dict],
+) -> None:
+    APPROVED_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
-    clip = None
+    approved_clips = []
+    rejected_clips = []
 
-    for candidate in clips:
-        if not isinstance(candidate, dict):
-            continue
+    for state in states.values():
+        clip = state["clip"]
+        status = state["status"]
 
-        if candidate.get("index") == clip_index:
-            clip = candidate
-            break
+        if status == "approved":
+            approved_clips.append(
+                {
+                    **clip,
+                    "file": str(
+                        state["approved_file"]
+                    ),
+                    "status": "approved",
+                }
+            )
 
-    if clip is None:
-        print(
-            f"Clip #{clip_index} not found "
-            f"in manifest {vod_id}"
+        elif status == "rejected":
+            rejected_clips.append(
+                {
+                    **clip,
+                    "status": "rejected",
+                }
+            )
+
+    output = {
+        "vod_id": vod_id,
+        "approved_clips": approved_clips,
+        "rejected_clips": rejected_clips,
+        "approved_count": len(
+            approved_clips
+        ),
+        "rejected_count": len(
+            rejected_clips
+        ),
+        "total_clips": len(states),
+    }
+
+    output_file = (
+        APPROVED_DIR
+        / f"{vod_id}_approved.json"
+    )
+
+    with output_file.open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(
+            output,
+            file,
+            ensure_ascii=False,
+            indent=2,
         )
-
-        return
-
-    if action == "approve":
-        approved_file = copy_approved_clip(
-            vod_id,
-            clip_index,
-            clip,
-        )
-
-        print()
-        print(
-            f"✅ Clip #{clip_index} approved."
-        )
-
-        print(
-            f"  Approved file: {approved_file}"
-        )
-
-        return
-
-    if action == "reject":
-        print()
-        print(
-            f"❌ Clip #{clip_index} rejected."
-        )
-
-        return
 
     print(
-        f"Unknown callback action: {action}"
+        f"Approval result written to: "
+        f"{output_file}"
     )
 
 
-def listen_for_approvals(
+def wait_for_approvals(
     bot_token: str,
     chat_id: str,
+    vod_id: str,
+    states: dict[int, dict],
 ) -> None:
+    pending = {
+        index
+        for index, state in states.items()
+        if state["status"] == "pending"
+    }
+
+    if not pending:
+        write_approval_files(
+            vod_id,
+            states,
+        )
+        return
+
     print()
     print(
-        "Starting Telegram approval listener..."
+        "Waiting for Telegram approvals..."
+    )
+    print(
+        "No approval timeout is configured."
+    )
+    print(
+        "The workflow will continue only after "
+        "every clip is reviewed."
     )
 
     offset = None
 
-    while True:
+    while pending:
+        print(
+            "Waiting for Telegram updates... "
+            f"Pending clips: {len(pending)}"
+        )
+
         try:
             updates = get_updates(
                 bot_token,
@@ -1103,11 +921,134 @@ def listen_for_approvals(
                 if not callback_query:
                     continue
 
-                handle_callback_query(
-                    bot_token,
-                    chat_id,
-                    callback_query,
+                message = callback_query.get(
+                    "message",
+                    {},
                 )
+
+                callback_chat_id = str(
+                    message
+                    .get("chat", {})
+                    .get("id", "")
+                )
+
+                if callback_chat_id != str(
+                    chat_id
+                ):
+                    continue
+
+                data = callback_query.get(
+                    "data",
+                    "",
+                )
+
+                parts = data.split(":")
+
+                if len(parts) != 3:
+                    continue
+
+                action = parts[0]
+                callback_vod_id = parts[1]
+
+                if callback_vod_id != vod_id:
+                    continue
+
+                try:
+                    clip_index = int(parts[2])
+                except ValueError:
+                    continue
+
+                if clip_index not in pending:
+                    continue
+
+                if action not in {
+                    "approve",
+                    "reject",
+                }:
+                    continue
+
+                callback_id = callback_query.get(
+                    "id"
+                )
+
+                if callback_id:
+                    answer_callback_query(
+                        bot_token,
+                        callback_id,
+                    )
+
+                state = states[
+                    clip_index
+                ]
+
+                clip = state["clip"]
+
+                if action == "approve":
+                    approved_file = (
+                        copy_approved_clip(
+                            vod_id,
+                            clip_index,
+                            clip,
+                        )
+                    )
+
+                    state["status"] = "approved"
+                    state["approved_file"] = (
+                        approved_file
+                    )
+
+                    reviewed_caption = (
+                        build_reviewed_caption(
+                            vod_id,
+                            clip,
+                            "approved",
+                        )
+                    )
+
+                    print(
+                        f"✅ Clip #{clip_index} approved."
+                    )
+
+                else:
+                    state["status"] = "rejected"
+                    state["approved_file"] = None
+
+                    reviewed_caption = (
+                        build_reviewed_caption(
+                            vod_id,
+                            clip,
+                            "rejected",
+                        )
+                    )
+
+                    print(
+                        f"❌ Clip #{clip_index} rejected."
+                    )
+
+                try:
+                    edit_telegram_message(
+                        bot_token,
+                        chat_id,
+                        state["message_id"],
+                        reviewed_caption,
+                    )
+                except Exception as exc:
+                    print(
+                        "Could not update Telegram "
+                        f"message: {exc}"
+                    )
+
+                pending.remove(
+                    clip_index
+                )
+
+                print(
+                    "Remaining pending clips: "
+                    f"{len(pending)}"
+                )
+
+            if pending:
+                continue
 
         except (
             requests.Timeout,
@@ -1116,20 +1057,179 @@ def listen_for_approvals(
             ConnectionResetError,
             ConnectionAbortedError,
         ) as exc:
-            print()
             print(
-                "Telegram listener connection error."
+                "Telegram listener connection error: "
+                f"{exc}"
             )
 
             print(
-                f"  Error: {exc}"
-            )
-
-            print(
-                "  Retrying..."
+                "Retrying..."
             )
 
             time.sleep(5)
+
+        except Exception as exc:
+            print(
+                "Telegram approval listener error: "
+                f"{exc}"
+            )
+
+            time.sleep(5)
+
+    write_approval_files(
+        vod_id,
+        states,
+    )
+
+    print()
+    print(
+        "All Telegram clips have been reviewed."
+    )
+
+
+def send_all_clips(
+    bot_token: str,
+    chat_id: str,
+    manifest: dict,
+) -> dict:
+    vod_id = str(
+        manifest["vod_id"]
+    )
+
+    clips = manifest.get(
+        "clips",
+        [],
+    )
+
+    if not isinstance(clips, list):
+        raise RuntimeError(
+            "Manifest 'clips' must be a list."
+        )
+
+    if not clips:
+        telegram_request(
+            bot_token,
+            "sendMessage",
+            payload={
+                "chat_id": chat_id,
+                "text": (
+                    "🔎 Análisis completado\n\n"
+                    "No se han generado clips válidos "
+                    "para revisar en Telegram."
+                ),
+            },
+        )
+
+        return {
+            "vod_id": vod_id,
+            "sent": [],
+            "sent_count": 0,
+            "failed": [],
+            "failed_count": 0,
+        }
+
+    send_status_message(
+        bot_token,
+        chat_id,
+        vod_id,
+        clips,
+    )
+
+    sent = []
+    failed = []
+    states = {}
+
+    for clip in clips:
+        if not isinstance(clip, dict):
+            continue
+
+        try:
+            message_id = send_clip(
+                bot_token,
+                chat_id,
+                vod_id,
+                clip,
+            )
+
+            clip_index = int(
+                clip["index"]
+            )
+
+            states[clip_index] = {
+                "clip": clip,
+                "message_id": message_id,
+                "status": "pending",
+                "approved_file": None,
+            }
+
+            sent.append(
+                {
+                    "index": clip_index,
+                    "message_id": message_id,
+                }
+            )
+
+        except Exception as exc:
+            print(
+                f"Failed to send clip "
+                f"#{clip.get('index', '?')}: "
+                f"{exc}"
+            )
+
+            failed.append(
+                {
+                    "index": clip.get("index"),
+                    "error": str(exc),
+                }
+            )
+
+    if failed:
+        print(
+            f"{len(failed)} clips could not be sent."
+        )
+
+    if not states:
+        raise RuntimeError(
+            "No clips could be sent to Telegram."
+        )
+
+    wait_for_approvals(
+        bot_token,
+        chat_id,
+        vod_id,
+        states,
+    )
+
+    result = {
+        "vod_id": vod_id,
+        "sent": sent,
+        "sent_count": len(sent),
+        "failed": failed,
+        "failed_count": len(failed),
+    }
+
+    result_file = (
+        APPROVED_DIR
+        / f"{vod_id}_telegram_send_result.json"
+    )
+
+    APPROVED_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with result_file.open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(
+            result,
+            file,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    return result
 
 
 def main() -> int:
