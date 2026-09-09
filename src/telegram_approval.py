@@ -117,6 +117,11 @@ def telegram_request(
 def verify_bot(
     bot_token: str,
 ) -> None:
+    telegram_request(
+        bot_token,
+        "getMe",
+    )
+
     result = telegram_request(
         bot_token,
         "getMe",
@@ -1107,6 +1112,17 @@ def send_all_clips(
         )
 
     if not clips:
+        print(
+            "No clips were generated for this VOD."
+        )
+
+        send_status_message(
+            bot_token,
+            chat_id,
+            vod_id,
+            clips,
+        )
+
         telegram_request(
             bot_token,
             "sendMessage",
@@ -1118,6 +1134,11 @@ def send_all_clips(
                     "para revisar en Telegram."
                 ),
             },
+        )
+
+        write_approval_files(
+            vod_id,
+            {},
         )
 
         return {
@@ -1136,61 +1157,40 @@ def send_all_clips(
     )
 
     sent = []
-    failed = []
     states = {}
 
     for clip in clips:
         if not isinstance(clip, dict):
             continue
 
-        try:
-            message_id = send_clip(
-                bot_token,
-                chat_id,
-                vod_id,
-                clip,
-            )
+        clip_index = int(
+            clip["index"]
+        )
 
-            clip_index = int(
-                clip["index"]
-            )
+        message_id = send_clip(
+            bot_token,
+            chat_id,
+            vod_id,
+            clip,
+        )
 
-            states[clip_index] = {
-                "clip": clip,
+        states[clip_index] = {
+            "clip": clip,
+            "message_id": message_id,
+            "status": "pending",
+            "approved_file": None,
+        }
+
+        sent.append(
+            {
+                "index": clip_index,
                 "message_id": message_id,
-                "status": "pending",
-                "approved_file": None,
             }
-
-            sent.append(
-                {
-                    "index": clip_index,
-                    "message_id": message_id,
-                }
-            )
-
-        except Exception as exc:
-            print(
-                f"Failed to send clip "
-                f"#{clip.get('index', '?')}: "
-                f"{exc}"
-            )
-
-            failed.append(
-                {
-                    "index": clip.get("index"),
-                    "error": str(exc),
-                }
-            )
-
-    if failed:
-        print(
-            f"{len(failed)} clips could not be sent."
         )
 
     if not states:
         raise RuntimeError(
-            "No clips could be sent to Telegram."
+            "No valid clips could be sent to Telegram."
         )
 
     wait_for_approvals(
@@ -1204,8 +1204,8 @@ def send_all_clips(
         "vod_id": vod_id,
         "sent": sent,
         "sent_count": len(sent),
-        "failed": failed,
-        "failed_count": len(failed),
+        "failed": [],
+        "failed_count": 0,
     }
 
     result_file = (
