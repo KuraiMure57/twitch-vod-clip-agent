@@ -23,6 +23,31 @@ jobs:
 
 
       # ============================================================
+      # CLEAN RUNTIME DATA
+      # ============================================================
+
+      - name: Clean previous runtime data
+        run: |
+          echo "========================================="
+          echo "Cleaning previous runtime data"
+          echo "========================================="
+
+          rm -rf data/telegram_approved
+          rm -rf data/clips
+          rm -rf data/filtered_candidates
+          rm -rf data/analysis
+          rm -rf data/transcriptions
+
+          mkdir -p data/telegram_approved
+          mkdir -p data/clips
+          mkdir -p data/filtered_candidates
+          mkdir -p data/analysis
+          mkdir -p data/transcriptions
+
+          echo "Runtime directories cleaned."
+
+
+      # ============================================================
       # SYSTEM INFORMATION
       # ============================================================
 
@@ -623,11 +648,6 @@ jobs:
           echo "🤖 PUENTE AUTOMÁTICO AL PROYECTO 1"
           echo "========================================="
 
-          if [ -z "${CROSS_REPO_TOKEN:-}" ]; then
-            echo "ERROR: CROSS_REPO_TOKEN no está configurado."
-            exit 1
-          fi
-
           APPROVAL_FILES=$(find data/telegram_approved \
             -maxdepth 1 \
             -type f \
@@ -642,6 +662,76 @@ jobs:
 
           echo "Archivos de aprobación encontrados:"
           echo "$APPROVAL_FILES"
+
+          python3 - <<'PY'
+          import glob
+          import json
+          import os
+          import sys
+
+          approval_files = glob.glob(
+              "data/telegram_approved/*_approved.json"
+          )
+
+          approved_total = 0
+
+          for approval_file in approval_files:
+
+              with open(
+                  approval_file,
+                  "r",
+                  encoding="utf-8",
+              ) as file:
+                  data = json.load(file)
+
+              approved_clips = data.get(
+                  "approved_clips",
+                  [],
+              )
+
+              print(
+                  f"VOD {data.get('vod_id', 'unknown')}: "
+                  f"{len(approved_clips)} approved clips."
+              )
+
+              approved_total += len(approved_clips)
+
+          print()
+          print(
+              f"Total approved clips: {approved_total}"
+          )
+
+          with open(
+              os.environ["GITHUB_ENV"],
+              "a",
+              encoding="utf-8",
+          ) as env_file:
+              env_file.write(
+                  f"APPROVED_CLIPS_COUNT={approved_total}\n"
+              )
+
+          if approved_total == 0:
+              print()
+              print(
+                  "No hay clips aprobados."
+              )
+              print(
+                  "No es necesario disparar el Proyecto 1."
+              )
+              print(
+                  "Pipeline finalizado correctamente."
+              )
+              sys.exit(0)
+          PY
+
+          echo
+          echo "Clips aprobados detectados: ${APPROVED_CLIPS_COUNT}"
+
+          if [ -z "${CROSS_REPO_TOKEN:-}" ]; then
+            echo "ERROR: CROSS_REPO_TOKEN no está configurado."
+            echo "Hay clips aprobados, por lo que el token es necesario."
+            exit 1
+          fi
 
           echo
           echo "Buscando IDs de los artefactos..."
@@ -741,13 +831,13 @@ jobs:
                   [],
               )
 
+              approved_total += len(
+                  approved_clips
+              )
+
               print(
                   f"VOD {vod_id}: "
                   f"{len(approved_clips)} approved clips."
-              )
-
-              approved_total += len(
-                  approved_clips
               )
 
               for clip in approved_clips:
@@ -783,9 +873,7 @@ jobs:
                       f" {clip_filename}"
                   )
 
-                  print(
-                      "Payload:"
-                  )
+                  print("Payload:")
 
                   print(
                       json.dumps(
@@ -861,41 +949,14 @@ jobs:
                           f"para {clip_filename}: {exc}"
                       ) from exc
 
-
-          # ========================================================
-          # IMPORTANTE:
-          #
-          # Si no hay clips aprobados, no es un error.
-          # El pipeline simplemente termina aquí.
-          # ========================================================
-
           if approved_total == 0:
-
-              print()
               print(
-                  "========================================="
-              )
-              print(
-                  "No hay clips aprobados."
-              )
-              print(
-                  "No es necesario disparar el Proyecto 1."
-              )
-              print(
+                  "No hay clips aprobados. "
                   "Pipeline finalizado correctamente."
               )
-              print(
-                  "========================================="
-              )
-
               raise SystemExit(0)
 
-
-          # Si había clips aprobados, entonces sí exigimos
-          # que todos los dispatch correspondientes funcionen.
-
           if dispatched != approved_total:
-
               raise RuntimeError(
                   "No todos los clips aprobados fueron "
                   "enviados al Proyecto 1. "
@@ -903,20 +964,15 @@ jobs:
                   f"Enviados: {dispatched}."
               )
 
-
           print()
-          print(
-              "========================================="
-          )
+          print("=========================================")
           print(
               "Puente al Proyecto 1 finalizado correctamente."
           )
           print(
               f"Clips enviados: {dispatched}"
           )
-          print(
-              "========================================="
-          )
+          print("=========================================")
           PY
 
 
