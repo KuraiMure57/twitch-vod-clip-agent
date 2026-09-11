@@ -653,9 +653,15 @@ jobs:
             echo "ERROR: GitHub Actions NO está recibiendo"
             echo "el secreto CROSS_REPO_TOKEN."
             echo
-            echo "El problema está en la configuración del"
-            echo "secreto de GitHub, no en el código del puente."
+            echo "El código del workflow intenta cargar:"
+            echo "\${{ secrets.CROSS_REPO_TOKEN }}"
             echo
+            echo "Revisa que CROSS_REPO_TOKEN esté creado"
+            echo "en Settings > Secrets and variables > Actions"
+            echo "del repositorio twitch-vod-clip-agent."
+            echo
+            echo "IMPORTANTE:"
+            echo "Debe estar en Secrets, no en Variables."
             echo "No se mostrará nunca el contenido del token."
             exit 1
           fi
@@ -791,10 +797,10 @@ jobs:
 
           if isinstance(data, dict):
               print(json.dumps(data))
-              elif isinstance(data, list):
-                  print(json.dumps(data[0] if data else {}))
-              else:
-                  print("{}")
+          elif isinstance(data, list):
+              print(json.dumps(data[0] if data else {}))
+          else:
+              print("{}")
           PY
               )
 
@@ -1020,32 +1026,6 @@ jobs:
             exit 0
           fi
 
-          MESSAGE="❌ Error en el pipeline de VOD
-
-          VOD: ${VOD_ID:-desconocido}
-
-          El procesamiento ha fallado.
-
-          Revisa los logs de GitHub Actions."
-
-          curl \
-            --silent \
-            --show-error \
-            --request POST \
-            --header "Content-Type: application/json" \
-            --data "$(python - "$MESSAGE" <<'PY'
-          import json
-          import sys
-
-          print(json.dumps({
-              "chat_id": sys.argv[1] if False else "",
-              "text": ""
-          }))
-          PY
-          )" \
-            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            >/dev/null 2>&1 || true
-
           python - "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_CHAT_ID" "${VOD_ID:-desconocido}" <<'PY'
           import json
           import sys
@@ -1057,7 +1037,7 @@ jobs:
 
           message = (
               "❌ Error en el pipeline de VOD\n\n"
-              f"VOD: {vod_id}\n"
+              f"VOD: {vod_id}\n\n"
               "El procesamiento ha fallado.\n\n"
               "Revisa los logs de GitHub Actions."
           )
