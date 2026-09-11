@@ -634,6 +634,103 @@ jobs:
 
 
       # ============================================================
+      # TEST CROSS REPO TOKEN
+      # ============================================================
+
+      - name: Test CROSS_REPO_TOKEN
+        if: success()
+        env:
+          CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "========================================="
+          echo "🔐 COMPROBACIÓN CROSS_REPO_TOKEN"
+          echo "========================================="
+
+          if [ -z "${CROSS_REPO_TOKEN:-}" ]; then
+            echo
+            echo "ERROR: GitHub Actions NO está recibiendo"
+            echo "el secreto CROSS_REPO_TOKEN."
+            echo
+            echo "El problema está en la configuración del"
+            echo "secreto de GitHub, no en el código del puente."
+            echo
+            echo "No se mostrará nunca el contenido del token."
+            exit 1
+          fi
+
+          echo "CROSS_REPO_TOKEN: recibido correctamente."
+          echo
+          echo "Comprobando autenticación contra GitHub..."
+
+          HTTP_CODE=$(curl \
+            --silent \
+            --show-error \
+            --output /tmp/github_user.json \
+            --write-out "%{http_code}" \
+            --request GET \
+            --header "Authorization: Bearer ${CROSS_REPO_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/user")
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo
+            echo "ERROR: El CROSS_REPO_TOKEN fue recibido,"
+            echo "pero GitHub rechazó la autenticación."
+            echo
+            echo "HTTP status: $HTTP_CODE"
+            echo
+            echo "Esto indica que el token puede estar"
+            echo "caducado, revocado o ser incorrecto."
+            exit 1
+          fi
+
+          TOKEN_LOGIN=$(python - <<'PY'
+          import json
+
+          with open("/tmp/github_user.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          print(data.get("login", "unknown"))
+          PY
+          )
+
+          echo "Token autenticado correctamente."
+          echo "Usuario GitHub asociado: $TOKEN_LOGIN"
+
+          echo
+          echo "Comprobando acceso al Proyecto 1..."
+
+          PROJECT1_HTTP_CODE=$(curl \
+            --silent \
+            --show-error \
+            --output /tmp/project1_repo.json \
+            --write-out "%{http_code}" \
+            --request GET \
+            --header "Authorization: Bearer ${CROSS_REPO_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/KuraiMure57/twitch-tiktok-agent")
+
+          if [ "$PROJECT1_HTTP_CODE" != "200" ]; then
+            echo
+            echo "ERROR: El token existe y autentica,"
+            echo "pero no tiene acceso al Proyecto 1."
+            echo
+            echo "HTTP status: $PROJECT1_HTTP_CODE"
+            exit 1
+          fi
+
+          echo "Acceso al Proyecto 1 confirmado."
+          echo
+          echo "========================================="
+          echo "CROSS_REPO_TOKEN: TODO CORRECTO"
+          echo "========================================="
+
+
+      # ============================================================
       # BRIDGE TO PROJECT 1
       # ============================================================
 
@@ -648,6 +745,11 @@ jobs:
           echo "🤖 PUENTE AUTOMÁTICO AL PROYECTO 1"
           echo "========================================="
 
+          if [ -z "${CROSS_REPO_TOKEN:-}" ]; then
+            echo "ERROR: CROSS_REPO_TOKEN no está configurado."
+            exit 1
+          fi
+
           APPROVAL_FILES=$(find data/telegram_approved \
             -maxdepth 1 \
             -type f \
@@ -656,452 +758,326 @@ jobs:
 
           if [ -z "$APPROVAL_FILES" ]; then
             echo "No hay archivos de aprobación."
-            echo "No se dispara el Proyecto 1."
+            echo "No hay clips aprobados que enviar."
             exit 0
           fi
 
-          echo "Archivos de aprobación encontrados:"
-          echo "$APPROVAL_FILES"
+          dispatched=0
+          approved_total=0
 
-          python3 - <<'PY'
-          import glob
+          while IFS= read -r approval_file; do
+
+            if [ -z "$approval_file" ]; then
+              continue
+            fi
+
+            echo
+            echo "-----------------------------------------"
+            echo "Procesando:"
+            echo "$approval_file"
+            echo "-----------------------------------------"
+
+            while IFS= read -r approval_entry; do
+
+              if [ -z "$approval_entry" ]; then
+                continue
+              fi
+
+              approved=$(python - "$approval_entry" <<'PY'
           import json
-          import os
           import sys
 
-          approval_files = glob.glob(
-              "data/telegram_approved/*_approved.json"
-          )
+          data = json.loads(sys.argv[1])
 
-          approved_total = 0
-
-          for approval_file in approval_files:
-
-              with open(
-                  approval_file,
-                  "r",
-                  encoding="utf-8",
-              ) as file:
-                  data = json.load(file)
-
-              approved_clips = data.get(
-                  "approved_clips",
-                  [],
-              )
-
-              print(
-                  f"VOD {data.get('vod_id', 'unknown')}: "
-                  f"{len(approved_clips)} approved clips."
-              )
-
-              approved_total += len(approved_clips)
-
-          print()
-          print(
-              f"Total approved clips: {approved_total}"
-          )
-
-          with open(
-              os.environ["GITHUB_ENV"],
-              "a",
-              encoding="utf-8",
-          ) as env_file:
-              env_file.write(
-                  f"APPROVED_CLIPS_COUNT={approved_total}\n"
-              )
-
-          if approved_total == 0:
-              print()
-              print(
-                  "No hay clips aprobados."
-              )
-              print(
-                  "No es necesario disparar el Proyecto 1."
-              )
-              print(
-                  "Pipeline finalizado correctamente."
-              )
-              sys.exit(0)
+          if isinstance(data, dict):
+              print(json.dumps(data))
+              elif isinstance(data, list):
+                  print(json.dumps(data[0] if data else {}))
+              else:
+                  print("{}")
           PY
+              )
+
+              if [ -z "$approved" ] || [ "$approved" = "{}" ]; then
+                continue
+              fi
+
+              is_approved=$(python - "$approved" <<'PY'
+          import json
+          import sys
+
+          data = json.loads(sys.argv[1])
+
+          value = data.get("approved", False)
+
+          if isinstance(value, str):
+              value = value.lower() == "true"
+
+          print("true" if value else "false")
+          PY
+              )
+
+              if [ "$is_approved" != "true" ]; then
+                continue
+              fi
+
+              approved_total=$((approved_total + 1))
+
+              clip_filename=$(python - "$approved" <<'PY'
+          import json
+          import sys
+
+          data = json.loads(sys.argv[1])
+
+          print(data.get("clip_filename", ""))
+          PY
+              )
+
+              if [ -z "$clip_filename" ]; then
+                echo "ERROR: Approved clip sin clip_filename."
+                exit 1
+              fi
+
+              clips_artifact_id=$(python - "$approved" <<'PY'
+          import json
+          import sys
+
+          data = json.loads(sys.argv[1])
+
+          value = (
+              data.get("artifact_id")
+              or data.get("clips_artifact_id")
+              or data.get("generated_clips_artifact_id")
+              or ""
+          )
+
+          print(value)
+          PY
+              )
+
+              manifest_artifact_id=$(python - "$approved" <<'PY'
+          import json
+          import sys
+
+          data = json.loads(sys.argv[1])
+
+          value = (
+              data.get("manifest_artifact_id")
+              or ""
+          )
+
+          print(value)
+          PY
+              )
+
+              if [ -z "$clips_artifact_id" ]; then
+                echo "ERROR: No se encontró artifact_id para:"
+                echo "$clip_filename"
+                exit 1
+              fi
+
+              if [ -z "$manifest_artifact_id" ]; then
+                echo "ERROR: No se encontró manifest_artifact_id para:"
+                echo "$clip_filename"
+                exit 1
+              fi
+
+              payload=$(python - "$VOD_ID" "$clip_filename" "$clips_artifact_id" "$manifest_artifact_id" <<'PY'
+          import json
+          import sys
+
+          vod_id = sys.argv[1]
+          clip_filename = sys.argv[2]
+          artifact_id = sys.argv[3]
+          manifest_artifact_id = sys.argv[4]
+
+          payload = {
+              "event_type": "vod_clips_approved",
+              "client_payload": {
+                  "vod_id": vod_id,
+                  "artifact_id": artifact_id,
+                  "manifest_artifact_id": manifest_artifact_id,
+                  "clip_filename": clip_filename
+              }
+          }
+
+          print(json.dumps(payload))
+          PY
+              )
+
+              echo
+              echo "Enviando clip aprobado al Proyecto 1:"
+              echo "$clip_filename"
+
+              HTTP_CODE=$(curl \
+                --silent \
+                --show-error \
+                --output /tmp/repository_dispatch_response.txt \
+                --write-out "%{http_code}" \
+                --request POST \
+                --header "Authorization: Bearer ${CROSS_REPO_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                --header "Content-Type: application/json" \
+                --data "$payload" \
+                "https://api.github.com/repos/KuraiMure57/twitch-tiktok-agent/dispatches")
+
+              if [ "$HTTP_CODE" != "204" ]; then
+                echo
+                echo "ERROR: GitHub rechazó el repository_dispatch."
+                echo "HTTP status: $HTTP_CODE"
+                echo
+                echo "Respuesta:"
+                cat /tmp/repository_dispatch_response.txt || true
+                exit 1
+              fi
+
+              echo "✅ Dispatch enviado correctamente."
+              dispatched=$((dispatched + 1))
+
+            done < <(
+              python - "$approval_file" <<'PY'
+          import json
+          import sys
+
+          path = sys.argv[1]
+
+          with open(path, "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          if isinstance(data, list):
+              for item in data:
+                  print(json.dumps(item))
+          elif isinstance(data, dict):
+              print(json.dumps(data))
+          PY
+            )
+
+          done <<< "$APPROVAL_FILES"
 
           echo
-          echo "Clips aprobados detectados: ${APPROVED_CLIPS_COUNT}"
+          echo "========================================="
+          echo "RESULTADO DEL PUENTE"
+          echo "========================================="
+          echo "Clips aprobados: $approved_total"
+          echo "Clips enviados:  $dispatched"
 
-          if [ -z "${CROSS_REPO_TOKEN:-}" ]; then
-            echo "ERROR: CROSS_REPO_TOKEN no está configurado."
-            echo "Hay clips aprobados, por lo que el token es necesario."
+          if [ "$approved_total" -eq 0 ]; then
+            echo
+            echo "No hay clips aprobados."
+            echo "El pipeline termina correctamente."
+            exit 0
+          fi
+
+          if [ "$dispatched" -ne "$approved_total" ]; then
+            echo
+            echo "ERROR: No se enviaron todos los clips aprobados."
             exit 1
           fi
 
           echo
-          echo "Buscando IDs de los artefactos..."
-
-          RUN_ARTIFACTS=$(curl -fsSL \
-            -H "Authorization: Bearer $CROSS_REPO_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts")
-
-          CLIPS_ART_ID=$(echo "$RUN_ARTIFACTS" | python3 -c '
-          import sys
-          import json
-
-          data = json.load(sys.stdin)
-
-          print(
-              next(
-                  (
-                      str(a["id"])
-                      for a in data.get("artifacts", [])
-                      if a.get("name") == "generated-clips-test"
-                  ),
-                  ""
-              )
-          )
-          ')
-
-          MANIFEST_ART_ID=$(echo "$RUN_ARTIFACTS" | python3 -c '
-          import sys
-          import json
-
-          data = json.load(sys.stdin)
-
-          print(
-              next(
-                  (
-                      str(a["id"])
-                      for a in data.get("artifacts", [])
-                      if a.get("name") == "clips-manifest-test"
-                  ),
-                  ""
-              )
-          )
-          ')
-
-          if [ -z "$CLIPS_ART_ID" ]; then
-            echo "ERROR: No se pudo encontrar generated-clips-test."
-            exit 1
-          fi
-
-          if [ -z "$MANIFEST_ART_ID" ]; then
-            echo "ERROR: No se pudo encontrar clips-manifest-test."
-            exit 1
-          fi
-
-          echo "Clips artifact: $CLIPS_ART_ID"
-          echo "Manifest artifact: $MANIFEST_ART_ID"
-
-          python3 - <<PY
-          import glob
-          import json
-          import os
-          import urllib.error
-          import urllib.request
-
-          clips_art_id = "$CLIPS_ART_ID"
-          manifest_art_id = "$MANIFEST_ART_ID"
-          token = os.environ["CROSS_REPO_TOKEN"]
-
-          approval_files = glob.glob(
-              "data/telegram_approved/*_approved.json"
-          )
-
-          dispatched = 0
-          approved_total = 0
-
-          for approval_file in approval_files:
-
-              with open(
-                  approval_file,
-                  "r",
-                  encoding="utf-8",
-              ) as file:
-                  data = json.load(file)
-
-              vod_id = data.get("vod_id")
-
-              if not vod_id:
-                  raise RuntimeError(
-                      f"El archivo de aprobación no contiene vod_id: "
-                      f"{approval_file}"
-                  )
-
-              approved_clips = data.get(
-                  "approved_clips",
-                  [],
-              )
-
-              approved_total += len(
-                  approved_clips
-              )
-
-              print(
-                  f"VOD {vod_id}: "
-                  f"{len(approved_clips)} approved clips."
-              )
-
-              for clip in approved_clips:
-
-                  clip_path = clip.get(
-                      "file",
-                      "",
-                  )
-
-                  if not clip_path:
-                      print(
-                          "Skipping approved clip without file path."
-                      )
-                      continue
-
-                  clip_filename = os.path.basename(
-                      clip_path
-                  )
-
-                  payload = {
-                      "event_type": "vod_clips_approved",
-                      "client_payload": {
-                          "vod_id": vod_id,
-                          "artifact_id": clips_art_id,
-                          "manifest_artifact_id": manifest_art_id,
-                          "clip_filename": clip_filename,
-                      },
-                  }
-
-                  print()
-                  print(
-                      "Enviando dispatch para:"
-                      f" {clip_filename}"
-                  )
-
-                  print("Payload:")
-
-                  print(
-                      json.dumps(
-                          payload,
-                          ensure_ascii=False,
-                          indent=2,
-                      )
-                  )
-
-                  request_data = json.dumps(
-                      payload
-                  ).encode("utf-8")
-
-                  request = urllib.request.Request(
-                      "https://api.github.com/repos/"
-                      "KuraiMure57/twitch-tiktok-agent/"
-                      "dispatches",
-                      data=request_data,
-                      method="POST",
-                      headers={
-                          "Authorization": (
-                              f"Bearer {token}"
-                          ),
-                          "Accept": (
-                              "application/vnd.github+json"
-                          ),
-                          "Content-Type": (
-                              "application/json"
-                          ),
-                          "X-GitHub-Api-Version": (
-                              "2022-11-28"
-                          ),
-                      },
-                  )
-
-                  try:
-
-                      with urllib.request.urlopen(
-                          request,
-                          timeout=60,
-                      ) as response:
-
-                          if response.status != 204:
-                              raise RuntimeError(
-                                  "GitHub repository dispatch "
-                                  f"returned HTTP {response.status}"
-                              )
-
-                          print(
-                              "✅ Proyecto 1 disparado correctamente "
-                              f"para {clip_filename}"
-                          )
-
-                          dispatched += 1
-
-                  except urllib.error.HTTPError as exc:
-
-                      error_body = exc.read().decode(
-                          "utf-8",
-                          errors="replace",
-                      )
-
-                      raise RuntimeError(
-                          "Error HTTP al disparar Proyecto 1 "
-                          f"para {clip_filename}: "
-                          f"HTTP {exc.code} - {error_body}"
-                      ) from exc
-
-                  except Exception as exc:
-
-                      raise RuntimeError(
-                          "Error disparando Proyecto 1 "
-                          f"para {clip_filename}: {exc}"
-                      ) from exc
-
-          if approved_total == 0:
-              print(
-                  "No hay clips aprobados. "
-                  "Pipeline finalizado correctamente."
-              )
-              raise SystemExit(0)
-
-          if dispatched != approved_total:
-              raise RuntimeError(
-                  "No todos los clips aprobados fueron "
-                  "enviados al Proyecto 1. "
-                  f"Aprobados: {approved_total}. "
-                  f"Enviados: {dispatched}."
-              )
-
-          print()
-          print("=========================================")
-          print(
-              "Puente al Proyecto 1 finalizado correctamente."
-          )
-          print(
-              f"Clips enviados: {dispatched}"
-          )
-          print("=========================================")
-          PY
+          echo "Todos los clips aprobados fueron enviados"
+          echo "correctamente al Proyecto 1."
 
 
       # ============================================================
       # PIPELINE SUMMARY
       # ============================================================
 
-      - name: Upload pipeline summary
-        if: always()
+      - name: Pipeline summary
+        if: success()
         run: |
           echo "========================================="
-          echo "PIPELINE SUMMARY"
+          echo "🎉 PIPELINE COMPLETADO"
           echo "========================================="
-
-          echo "VOD_ID: ${VOD_ID:-unknown}"
-
-          if [ -d "data/clips/${VOD_ID}" ]; then
-
-            CLIP_COUNT=$(find "data/clips/${VOD_ID}" \
-              -maxdepth 1 \
-              -type f \
-              -name "*.mp4" \
-              | wc -l)
-
-            echo "Generated clips: $CLIP_COUNT"
-
-          else
-
-            echo "Generated clips: 0"
-
-          fi
-
-          if [ -d "data/telegram_approved" ]; then
-
-            APPROVAL_COUNT=$(find data/telegram_approved \
-              -maxdepth 1 \
-              -type f \
-              -name "*_approved.json" \
-              | wc -l)
-
-            echo "Approval JSON files: $APPROVAL_COUNT"
-
-          else
-
-            echo "Approval JSON files: 0"
-
-          fi
-
-          echo "========================================="
+          echo
+          echo "VOD: ${VOD_ID}"
+          echo
+          echo "El pipeline completo ha finalizado correctamente."
 
 
       # ============================================================
-      # FAILURE NOTIFICATION
+      # TELEGRAM FAILURE NOTIFICATION
       # ============================================================
 
-      - name: Notify Telegram pipeline failure
+      - name: Notify Telegram on pipeline failure
         if: failure()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python3 - <<'PY'
-          import os
-          import urllib.parse
+          set +e
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+            echo "Telegram failure notification skipped:"
+            echo "TELEGRAM_BOT_TOKEN is not configured."
+            exit 0
+          fi
+
+          if [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram failure notification skipped:"
+            echo "TELEGRAM_CHAT_ID is not configured."
+            exit 0
+          fi
+
+          MESSAGE="❌ Error en el pipeline de VOD
+
+          VOD: ${VOD_ID:-desconocido}
+
+          El procesamiento ha fallado.
+
+          Revisa los logs de GitHub Actions."
+
+          curl \
+            --silent \
+            --show-error \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --data "$(python - "$MESSAGE" <<'PY'
+          import json
+          import sys
+
+          print(json.dumps({
+              "chat_id": sys.argv[1] if False else "",
+              "text": ""
+          }))
+          PY
+          )" \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            >/dev/null 2>&1 || true
+
+          python - "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_CHAT_ID" "${VOD_ID:-desconocido}" <<'PY'
+          import json
+          import sys
           import urllib.request
 
-          token = os.environ.get(
-              "TELEGRAM_BOT_TOKEN"
-          )
+          token = sys.argv[1]
+          chat_id = sys.argv[2]
+          vod_id = sys.argv[3]
 
-          chat_id = os.environ.get(
-              "TELEGRAM_CHAT_ID"
-          )
-
-          if not token or not chat_id:
-
-              print(
-                  "Telegram failure notification skipped: "
-                  "credentials not configured."
-              )
-
-              raise SystemExit(0)
-
-          vod_id = os.environ.get(
-              "VOD_ID",
-              "unknown",
-          )
-
-          text = (
+          message = (
               "❌ Error en el pipeline de VOD\n\n"
               f"VOD: {vod_id}\n"
               "El procesamiento ha fallado.\n\n"
               "Revisa los logs de GitHub Actions."
           )
 
-          data = urllib.parse.urlencode(
-              {
-                  "chat_id": chat_id,
-                  "text": text,
-              }
-          ).encode("utf-8")
-
-          url = (
-              "https://api.telegram.org/"
-              f"bot{token}/sendMessage"
-          )
+          payload = json.dumps({
+              "chat_id": chat_id,
+              "text": message
+          }).encode("utf-8")
 
           request = urllib.request.Request(
-              url,
-              data=data,
-              method="POST",
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=payload,
+              headers={
+                  "Content-Type": "application/json"
+              },
+              method="POST"
           )
 
           try:
-
-              with urllib.request.urlopen(
-                  request,
-                  timeout=30,
-              ) as response:
-
-                  print(
-                      "Telegram failure notification sent: "
-                      f"HTTP {response.status}"
-                  )
-
+              urllib.request.urlopen(request, timeout=30)
           except Exception as exc:
-
-              print(
-                  "Telegram failure notification failed: "
-                  f"{exc}"
-              )
+              print(f"Telegram notification failed: {exc}")
           PY
