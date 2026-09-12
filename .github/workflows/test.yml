@@ -615,6 +615,7 @@ jobs:
       # ============================================================
 
       - name: Upload clips manifest
+        id: upload_clips_manifest
         uses: actions/upload-artifact@v4
         with:
           name: clips-manifest-test
