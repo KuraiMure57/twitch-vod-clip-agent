@@ -742,10 +742,16 @@ jobs:
       # BRIDGE TO PROJECT 1
       # ============================================================
 
+            # ============================================================
+      # BRIDGE TO PROJECT 1
+      # ============================================================
+
       - name: Trigger Twitch TikTok Agent for Approved Clips
         if: success()
         env:
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          GENERATED_CLIPS_ARTIFACT_ID: ${{ steps.upload_generated_clips.outputs.artifact-id }}
+          MANIFEST_ARTIFACT_ID: ${{ steps.upload_clips_manifest.outputs.artifact-id }}
         run: |
           set -euo pipefail
 
@@ -753,10 +759,48 @@ jobs:
           echo "🤖 PUENTE AUTOMÁTICO AL PROYECTO 1"
           echo "========================================="
 
+          # --------------------------------------------------------
+          # COMPROBAR TOKEN
+          # --------------------------------------------------------
+
           if [ -z "${CROSS_REPO_TOKEN:-}" ]; then
             echo "ERROR: CROSS_REPO_TOKEN no está configurado."
             exit 1
           fi
+
+          echo "CROSS_REPO_TOKEN: configurado."
+
+          # --------------------------------------------------------
+          # COMPROBAR ARTIFACTS
+          # --------------------------------------------------------
+
+          if [ -z "${GENERATED_CLIPS_ARTIFACT_ID:-}" ]; then
+            echo
+            echo "ERROR: No se obtuvo el ID del artifact de clips."
+            echo
+            echo "GENERATED_CLIPS_ARTIFACT_ID está vacío."
+            exit 1
+          fi
+
+          if [ -z "${MANIFEST_ARTIFACT_ID:-}" ]; then
+            echo
+            echo "ERROR: No se obtuvo el ID del artifact del manifest."
+            echo
+            echo "MANIFEST_ARTIFACT_ID está vacío."
+            exit 1
+          fi
+
+          echo
+          echo "Artifact de clips:"
+          echo "${GENERATED_CLIPS_ARTIFACT_ID}"
+
+          echo
+          echo "Artifact del manifest:"
+          echo "${MANIFEST_ARTIFACT_ID}"
+
+          # --------------------------------------------------------
+          # BUSCAR ARCHIVO DE APROBACIÓN
+          # --------------------------------------------------------
 
           APPROVAL_FILES=$(find data/telegram_approved \
             -maxdepth 1 \
@@ -765,13 +809,18 @@ jobs:
             2>/dev/null || true)
 
           if [ -z "$APPROVAL_FILES" ]; then
+            echo
             echo "No hay archivos de aprobación."
-            echo "No hay clips aprobados que enviar."
+            echo "No hay clips que enviar."
             exit 0
           fi
 
           dispatched=0
           approved_total=0
+
+          # --------------------------------------------------------
+          # PROCESAR CADA ARCHIVO DE APROBACIÓN
+          # --------------------------------------------------------
 
           while IFS= read -r approval_file; do
 
@@ -781,116 +830,197 @@ jobs:
 
             echo
             echo "-----------------------------------------"
-            echo "Procesando:"
+            echo "Procesando archivo de aprobación:"
             echo "$approval_file"
             echo "-----------------------------------------"
 
-            while IFS= read -r approval_entry; do
+            # ------------------------------------------------------
+            # EXTRAER CLIPS APROBADOS
+            # ------------------------------------------------------
+            #
+            # El JSON real tiene esta estructura:
+            #
+            # {
+            #   "vod_id": "...",
+            #   "approved_clips": [
+            #     {
+            #       "index": 1,
+            #       "file": "...",
+            #       "status": "approved"
+            #     }
+            #   ]
+            # }
+            #
+            # Por tanto NO debemos buscar:
+            #
+            # data["approved"]
+            #
+            # sino:
+            #
+            # data["approved_clips"]
+            # ------------------------------------------------------
 
-              if [ -z "$approval_entry" ]; then
-                continue
-              fi
+            while IFS= read -r approved_entry; do
 
-              approved=$(python - "$approval_entry" <<'PY'
-          import json
-          import sys
-
-          data = json.loads(sys.argv[1])
-
-          if isinstance(data, dict):
-              print(json.dumps(data))
-          elif isinstance(data, list):
-              print(json.dumps(data[0] if data else {}))
-          else:
-              print("{}")
-          PY
-              )
-
-              if [ -z "$approved" ] || [ "$approved" = "{}" ]; then
-                continue
-              fi
-
-              is_approved=$(python - "$approved" <<'PY'
-          import json
-          import sys
-
-          data = json.loads(sys.argv[1])
-
-          value = data.get("approved", False)
-
-          if isinstance(value, str):
-              value = value.lower() == "true"
-
-          print("true" if value else "false")
-          PY
-              )
-
-              if [ "$is_approved" != "true" ]; then
+              if [ -z "$approved_entry" ]; then
                 continue
               fi
 
               approved_total=$((approved_total + 1))
 
-              clip_filename=$(python - "$approved" <<'PY'
+              echo
+              echo "Clip aprobado detectado:"
+              echo "$approved_entry"
+
+              # ----------------------------------------------------
+              # OBTENER ÍNDICE DEL CLIP
+              # ----------------------------------------------------
+
+              clip_index=$(python - "$approved_entry" <<'PY'
           import json
           import sys
 
           data = json.loads(sys.argv[1])
 
-          print(data.get("clip_filename", ""))
+          value = data.get("index")
+
+          if value is None:
+              raise SystemExit(
+                  "ERROR: El clip aprobado no contiene 'index'."
+              )
+
+          print(int(value))
+          PY
+              )
+
+              echo
+              echo "Índice del clip aprobado: $clip_index"
+
+              # ----------------------------------------------------
+              # BUSCAR EL NOMBRE REAL EN EL MANIFEST
+              # ----------------------------------------------------
+
+              MANIFEST_FILE="data/clips/${VOD_ID}/clips_manifest.json"
+
+              if [ ! -f "$MANIFEST_FILE" ]; then
+                echo
+                echo "ERROR: No existe el manifest:"
+                echo "$MANIFEST_FILE"
+                exit 1
+              fi
+
+              clip_filename=$(python \
+                "$MANIFEST_FILE" \
+                "$clip_index" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          manifest_file = Path(sys.argv[1])
+          clip_index = int(sys.argv[2])
+
+          with manifest_file.open(
+              "r",
+              encoding="utf-8",
+          ) as file:
+              manifest = json.load(file)
+
+          clips = manifest.get("clips", [])
+
+          if not isinstance(clips, list):
+              raise SystemExit(
+                  "ERROR: El campo 'clips' del manifest no es una lista."
+              )
+
+          for clip in clips:
+
+              if not isinstance(clip, dict):
+                  continue
+
+              try:
+                  index = int(clip.get("index"))
+              except (
+                  TypeError,
+                  ValueError,
+              ):
+                  continue
+
+              if index != clip_index:
+                  continue
+
+              file_value = clip.get("file", "")
+
+              if not file_value:
+                  raise SystemExit(
+                      f"ERROR: El clip #{clip_index} no tiene campo 'file'."
+                  )
+
+              print(
+                  Path(str(file_value)).name
+              )
+
+              raise SystemExit(0)
+
+          raise SystemExit(
+              f"ERROR: No se encontró el clip #{clip_index} en el manifest."
+          )
           PY
               )
 
               if [ -z "$clip_filename" ]; then
-                echo "ERROR: Approved clip sin clip_filename."
+                echo
+                echo "ERROR: No se pudo obtener el nombre real del clip."
+                echo "Índice: $clip_index"
                 exit 1
               fi
 
-              clips_artifact_id=$(python - "$approved" <<'PY'
-          import json
-          import sys
+              echo
+              echo "Nombre real del MP4:"
+              echo "$clip_filename"
 
-          data = json.loads(sys.argv[1])
+              # ----------------------------------------------------
+              # COMPROBAR QUE EL MP4 EXISTE
+              # ----------------------------------------------------
 
-          value = (
-              data.get("artifact_id")
-              or data.get("clips_artifact_id")
-              or data.get("generated_clips_artifact_id")
-              or ""
-          )
+              generated_clip=""
 
-          print(value)
-          PY
-              )
+              generated_clip=$(find \
+                "data/clips/${VOD_ID}" \
+                -maxdepth 1 \
+                -type f \
+                -name "$clip_filename" \
+                -print \
+                -quit)
 
-              manifest_artifact_id=$(python - "$approved" <<'PY'
-          import json
-          import sys
-
-          data = json.loads(sys.argv[1])
-
-          value = (
-              data.get("manifest_artifact_id")
-              or ""
-          )
-
-          print(value)
-          PY
-              )
-
-              if [ -z "$clips_artifact_id" ]; then
-                echo "ERROR: No se encontró artifact_id para:"
+              if [ -z "$generated_clip" ]; then
+                echo
+                echo "ERROR: El MP4 del clip aprobado no existe."
+                echo
+                echo "Buscado:"
                 echo "$clip_filename"
+                echo
+                echo "Archivos disponibles:"
+                find "data/clips/${VOD_ID}" \
+                  -maxdepth 1 \
+                  -type f \
+                  -name "*.mp4" \
+                  -print
                 exit 1
               fi
 
-              if [ -z "$manifest_artifact_id" ]; then
-                echo "ERROR: No se encontró manifest_artifact_id para:"
-                echo "$clip_filename"
-                exit 1
-              fi
+              echo
+              echo "MP4 encontrado:"
+              echo "$generated_clip"
 
-              payload=$(python - "$VOD_ID" "$clip_filename" "$clips_artifact_id" "$manifest_artifact_id" <<'PY'
+              # ----------------------------------------------------
+              # CREAR PAYLOAD
+              # ----------------------------------------------------
+
+              payload=$(python \
+                "$VOD_ID" \
+                "$clip_filename" \
+                "$GENERATED_CLIPS_ARTIFACT_ID" \
+                "$MANIFEST_ARTIFACT_ID" <<'PY'
           import json
           import sys
 
@@ -905,17 +1035,40 @@ jobs:
                   "vod_id": vod_id,
                   "artifact_id": artifact_id,
                   "manifest_artifact_id": manifest_artifact_id,
-                  "clip_filename": clip_filename
-              }
+                  "clip_filename": clip_filename,
+              },
           }
 
-          print(json.dumps(payload))
+          print(
+              json.dumps(
+                  payload,
+                  ensure_ascii=False,
+              )
+          )
           PY
               )
 
               echo
-              echo "Enviando clip aprobado al Proyecto 1:"
+              echo "-----------------------------------------"
+              echo "ENVIANDO CLIP AL PROYECTO 1"
+              echo "-----------------------------------------"
+              echo
+              echo "VOD:"
+              echo "$VOD_ID"
+              echo
+              echo "Clip:"
               echo "$clip_filename"
+              echo
+              echo "Artifact clips:"
+              echo "$GENERATED_CLIPS_ARTIFACT_ID"
+              echo
+              echo "Artifact manifest:"
+              echo "$MANIFEST_ARTIFACT_ID"
+              echo
+
+              # ----------------------------------------------------
+              # REPOSITORY DISPATCH
+              # ----------------------------------------------------
 
               HTTP_CODE=$(curl \
                 --silent \
@@ -933,13 +1086,16 @@ jobs:
               if [ "$HTTP_CODE" != "204" ]; then
                 echo
                 echo "ERROR: GitHub rechazó el repository_dispatch."
-                echo "HTTP status: $HTTP_CODE"
+                echo
+                echo "HTTP status:"
+                echo "$HTTP_CODE"
                 echo
                 echo "Respuesta:"
                 cat /tmp/repository_dispatch_response.txt || true
                 exit 1
               fi
 
+              echo
               echo "✅ Dispatch enviado correctamente."
               dispatched=$((dispatched + 1))
 
@@ -950,43 +1106,86 @@ jobs:
 
           path = sys.argv[1]
 
-          with open(path, "r", encoding="utf-8") as f:
-              data = json.load(f)
+          with open(
+              path,
+              "r",
+              encoding="utf-8",
+          ) as file:
+              data = json.load(file)
 
-          if isinstance(data, list):
-              for item in data:
-                  print(json.dumps(item))
-          elif isinstance(data, dict):
-              print(json.dumps(data))
+          if not isinstance(data, dict):
+              raise SystemExit(
+                  "ERROR: El archivo de aprobación debe ser un objeto JSON."
+              )
+
+          approved_clips = data.get(
+              "approved_clips",
+              [],
+          )
+
+          if not isinstance(
+              approved_clips,
+              list,
+          ):
+              raise SystemExit(
+                  "ERROR: 'approved_clips' no es una lista."
+              )
+
+          for clip in approved_clips:
+
+              if not isinstance(
+                  clip,
+                  dict,
+              ):
+                  continue
+
+              status = str(
+                  clip.get(
+                      "status",
+                      "",
+                  )
+              ).strip().lower()
+
+              if status != "approved":
+                  continue
+
+              print(
+                  json.dumps(
+                      clip,
+                      ensure_ascii=False,
+                  )
+              )
           PY
             )
 
           done <<< "$APPROVAL_FILES"
 
+          # --------------------------------------------------------
+          # RESULTADO
+          # --------------------------------------------------------
+
           echo
           echo "========================================="
           echo "RESULTADO DEL PUENTE"
           echo "========================================="
+          echo
           echo "Clips aprobados: $approved_total"
           echo "Clips enviados:  $dispatched"
+          echo
 
           if [ "$approved_total" -eq 0 ]; then
-            echo
             echo "No hay clips aprobados."
             echo "El pipeline termina correctamente."
             exit 0
           fi
 
           if [ "$dispatched" -ne "$approved_total" ]; then
-            echo
             echo "ERROR: No se enviaron todos los clips aprobados."
             exit 1
           fi
 
-          echo
-          echo "Todos los clips aprobados fueron enviados"
+          echo "✅ Todos los clips aprobados fueron enviados"
           echo "correctamente al Proyecto 1."
-
 
       # ============================================================
       # PIPELINE SUMMARY
