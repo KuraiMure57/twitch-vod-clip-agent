@@ -602,6 +602,7 @@ jobs:
       # ============================================================
 
       - name: Upload generated clips
+        id: upload_generated_clips
         uses: actions/upload-artifact@v4
         with:
           name: generated-clips-test
