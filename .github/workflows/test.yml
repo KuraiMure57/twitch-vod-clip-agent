@@ -988,7 +988,7 @@ jobs:
               # CREAR PAYLOAD
               # ----------------------------------------------------
 
-              payload=$(python \
+              payload=$(python - \
                 "$VOD_ID" \
                 "$clip_filename" \
                 "$GENERATED_CLIPS_ARTIFACT_ID" \
