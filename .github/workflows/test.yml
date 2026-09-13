@@ -742,10 +742,6 @@ jobs:
       # BRIDGE TO PROJECT 1
       # ============================================================
 
-            # ============================================================
-      # BRIDGE TO PROJECT 1
-      # ============================================================
-
       - name: Trigger Twitch TikTok Agent for Approved Clips
         if: success()
         env:
@@ -837,28 +833,6 @@ jobs:
             # ------------------------------------------------------
             # EXTRAER CLIPS APROBADOS
             # ------------------------------------------------------
-            #
-            # El JSON real tiene esta estructura:
-            #
-            # {
-            #   "vod_id": "...",
-            #   "approved_clips": [
-            #     {
-            #       "index": 1,
-            #       "file": "...",
-            #       "status": "approved"
-            #     }
-            #   ]
-            # }
-            #
-            # Por tanto NO debemos buscar:
-            #
-            # data["approved"]
-            #
-            # sino:
-            #
-            # data["approved_clips"]
-            # ------------------------------------------------------
 
             while IFS= read -r approved_entry; do
 
@@ -909,9 +883,7 @@ jobs:
                 exit 1
               fi
 
-              clip_filename=$(python \
-                "$MANIFEST_FILE" \
-                "$clip_index" <<'PY'
+              clip_filename=$(python - "$MANIFEST_FILE" "$clip_index" <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -1097,6 +1069,7 @@ jobs:
 
               echo
               echo "✅ Dispatch enviado correctamente."
+
               dispatched=$((dispatched + 1))
 
             done < <(
@@ -1186,6 +1159,7 @@ jobs:
 
           echo "✅ Todos los clips aprobados fueron enviados"
           echo "correctamente al Proyecto 1."
+
 
       # ============================================================
       # PIPELINE SUMMARY
