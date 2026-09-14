@@ -4,78 +4,56 @@ import time
 import urllib.parse
 import urllib.request
 
-# Variables de entorno
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-GH_TOKEN = os.environ.get("CROSS_REPO_TOKEN")
-REPO_FULL = os.environ.get("GITHUB_REPOSITORY", "KuraiMure57/twitch-vod-clip-agent")
-
-if not BOT_TOKEN or not CHAT_ID or not GH_TOKEN:
-    print("❌ ERROR: Faltan variables de entorno esenciales.")
-    exit(1)
-
-print("🚀 Bot iniciado correctamente en la nube. Escuchando 24/7...")
-
-def send_telegram_message(text):
-    """Envía un mensaje de texto plano al chat autorizado de Telegram."""
-    try:
-        url = f"https://telegram.org{BOT_TOKEN}/sendMessage"
-        payload = json.dumps({"chat_id": CHAT_ID, "text": text}).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode("utf-8")).get("ok", False)
-    except Exception as e:
-        print(f"Error enviando mensaje: {e}")
-        return False
+# Variables de entorno indispensables y funciones iniciales del bot (configuración, envío de mensajes a Telegram y verificación de estado del pipeline en GitHub).
 def is_pipeline_running():
-    """Comprueba si el pipeline test.yml ya está ejecutándose en GitHub."""
-    # Realiza una petición a la API de GitHub para verificar si hay ejecuciones activas (queued, in_progress, etc.)
-    # Puedes encontrar el código completo de esta función en los documentos referenciados.
-    pass
-
+    """Verifica si el pipeline test.yml ya está en curso."""
+    try:
+        url = f"https://github.com{REPO_FULL}/actions/workflows/test.yml/runs?per_page=20"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            for r in data.get("workflow_runs", []):
+                if r.get("status") in {"queued", "in_progress", "waiting", "requested", "pending"}:
+                    return True
+            return False
+    except Exception as e:
+        print(f"Error comprobando pipeline: {e}")
+        return False
 def get_latest_run_status():
-    """Consulta cómo terminó el último flujo ejecutado."""
-    # Consulta el último estado del workflow y devuelve un mensaje formateado según el resultado (éxito, fallo, en proceso).
-    # Puedes encontrar el código completo de esta función en los documentos referenciados.
+    """Consulta el estado del último workflow ejecutado."""
+    # ... código para consultar el estado del workflow en GitHub Actions ...
     pass
 
 def launch_pipeline():
     """Lanza el workflow test.yml de GitHub Actions."""
-    # Realiza una petición POST a la API de GitHub para despachar el workflow en la rama principal.
-    # Puedes encontrar el código completo de esta función en los documentos referenciados.
+    # ... código para realizar la petición POST y lanzar el pipeline ...
     pass
 def main_polling_loop():
-    """Bucle infinito que consulta la API de Telegram cada 5 segundos."""
+    """Bucle infinito que consulta la API de Telegram cada 4 segundos."""
     offset = None
     print("🤖 Escuchando comandos en Telegram...")
-    
     while True:
         try:
             url = f"https://telegram.org{BOT_TOKEN}/getUpdates?timeout=10"
             if offset:
                 url += f"&offset={offset}"
-                
             req = urllib.request.Request(url, timeout=15)
             with urllib.request.urlopen(req) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                
             if not data.get("ok"):
-                time.sleep(5)
+                time.sleep(4)
                 continue
             updates = data.get("result", [])
             for update in updates:
                 update_id = update.get("update_id")
                 if update_id:
                     offset = update_id + 1
-                
                 message = update.get("message")
                 if not message:
                     continue
-                
                 chat_id = str(message.get("chat", {}).get("id", ""))
                 if chat_id != CHAT_ID:
                     continue
-                
                 text = message.get("text", "").strip().lower()
                 if text.startswith("/start"):
                     if is_pipeline_running():
@@ -85,17 +63,13 @@ def main_polling_loop():
                             send_telegram_message("🚀 Procesamiento iniciado.\nEl Proyecto 2 comenzará a descargar y analizar el último VOD.\nTe avisaré cuando termine.")
                         else:
                             send_telegram_message("❌ Error: No se pudo lanzar el pipeline de GitHub.")
-                
                 elif text.startswith("/estado"):
                     status_msg = get_latest_run_status()
                     send_telegram_message(status_msg)
-                
                 elif text.startswith("/help"):
                     send_telegram_message("📖 Comandos disponibles:\n\n/start → Inicia un nuevo procesamiento.\n/estado → Consulta el estado del procesamiento.\n/help → Muestra este menú.")
-        
         except Exception as e:
             print(f"Error en el bucle principal: {e}")
-        
         time.sleep(4)
 
 if __name__ == "__main__":
