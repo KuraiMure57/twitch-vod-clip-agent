@@ -3,10 +3,54 @@ import os
 import time
 import urllib.parse
 import urllib.request
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# Variables de entorno indispensables y funciones iniciales del bot (configuración, envío de mensajes a Telegram y verificación de estado del pipeline en GitHub).
+# ============================================================
+# CONFIGURACIÓN Y VARIABLES DE ENTORNO
+# ============================================================
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+GH_TOKEN = os.environ.get("CROSS_REPO_TOKEN")
+REPO_FULL = os.environ.get("GITHUB_REPOSITORY", "KuraiMure57/twitch-vod-clip-agent")
+
+if not BOT_TOKEN or not CHAT_ID or not GH_TOKEN:
+    print("❌ ERROR: Faltan variables de entorno esenciales.")
+    exit(1)
+
+# ============================================================
+# SERVIDOR WEB FALSO PARA ENGAÑAR A RENDER (PLAN GRATUITO)
+# ============================================================
+class FakeServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass # Silenciar logs del servidor para no saturar la consola
+
+def run_fake_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), FakeServer)
+    print(f"🌍 Servidor web falso escuchando en el puerto {port}")
+    server.serve_forever()
+
+# ============================================================
+# FUNCIONES DE CONEXIÓN CON GITHUB ACTIONS
+# ============================================================
+def send_telegram_message(text):
+    try:
+        url = f"https://telegram.org{BOT_TOKEN}/sendMessage"
+        payload = json.dumps({"chat_id": CHAT_ID, "text": text}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("ok", False)
+    except Exception as e:
+        print(f"Error enviando mensaje: {e}")
+        return False
+
 def is_pipeline_running():
-    """Verifica si el pipeline test.yml ya está en curso."""
     try:
         url = f"https://github.com{REPO_FULL}/actions/workflows/test.yml/runs?per_page=20"
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json"})
@@ -19,19 +63,49 @@ def is_pipeline_running():
     except Exception as e:
         print(f"Error comprobando pipeline: {e}")
         return False
+
 def get_latest_run_status():
-    """Consulta el estado del último workflow ejecutado."""
-    # ... código para consultar el estado del workflow en GitHub Actions ...
-    pass
+    try:
+        url = f"https://github.com{REPO_FULL}/actions/workflows/test.yml/runs?per_page=1"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            runs = data.get("workflow_runs", [])
+            if not runs:
+                return "ℹ️ No se encontraron ejecuciones previas del pipeline."
+            last_run = runs[0]
+            status = last_run.get("status")
+            conclusion = last_run.get("conclusion")
+            url_web = last_run.get("html_url")
+            if status in {"queued", "in_progress", "waiting"}:
+                return f"🟢 Estado: El pipeline está EN EJECUCIÓN actualmente.\nSíguelo aquí: {url_web}"
+            if conclusion == "success":
+                return "✅ Estado: El último pipeline finalizó con ÉXITO."
+            if conclusion == "failure":
+                return f"❌ Estado: El último pipeline FALLÓ.\nRevisa los logs aquí: {url_web}"
+            return f"ℹ️ Estado: {status} | Conclusión: {conclusion}"
+    except Exception as e:
+        return f"⚠️ Error al consultar el estado en GitHub: {e}"
 
 def launch_pipeline():
-    """Lanza el workflow test.yml de GitHub Actions."""
-    # ... código para realizar la petición POST y lanzar el pipeline ...
-    pass
+    try:
+        url = f"https://github.com{REPO_FULL}/actions/workflows/test.yml/dispatches"
+        payload = json.dumps({"ref": "main"}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.getcode() == 204
+    except Exception as e:
+        print(f"Error lanzando pipeline: {e}")
+        return False
+
+# ============================================================
+# BUCLE PRINCIPAL DE ESCUCHA DE TELEGRAM (POLLING)
+# ============================================================
 def main_polling_loop():
-    """Bucle infinito que consulta la API de Telegram cada 4 segundos."""
     offset = None
-    print("🤖 Escuchando comandos en Telegram...")
+    threading.Thread(target=run_fake_server, daemon=True).start()
+    print("🚀 Bot iniciado correctamente en la nube. Escuchando 24/7...")
+    
     while True:
         try:
             url = f"https://telegram.org{BOT_TOKEN}/getUpdates?timeout=10"
@@ -43,6 +117,7 @@ def main_polling_loop():
             if not data.get("ok"):
                 time.sleep(4)
                 continue
+            
             updates = data.get("result", [])
             for update in updates:
                 update_id = update.get("update_id")
@@ -55,6 +130,7 @@ def main_polling_loop():
                 if chat_id != CHAT_ID:
                     continue
                 text = message.get("text", "").strip().lower()
+                
                 if text.startswith("/start"):
                     if is_pipeline_running():
                         send_telegram_message("🟢 El Proyecto 2 ya está procesando un VOD.\nNo se ha iniciado otro proceso.")
