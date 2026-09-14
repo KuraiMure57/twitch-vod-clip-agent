@@ -2,7 +2,7 @@ name: Telegram Listener
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "1,6,11,16,21,26,31,36,41,46,51,56 * * * *"
 
   workflow_dispatch:
 
@@ -748,7 +748,7 @@ jobs:
           steps.start_check.outputs.start == 'true' &&
           steps.pipeline_status.outputs.running == 'false'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         run: |
           echo "========================================="
           echo "Launching VOD pipeline"
