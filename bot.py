@@ -28,7 +28,7 @@ class FakeServer(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OK")
     def log_message(self, format, *args):
-        pass # Silenciar logs del servidor para no saturar la consola
+        pass # Silenciar logs en la consola
 
 def run_fake_server():
     port = int(os.environ.get("PORT", 10000))
@@ -111,8 +111,8 @@ def main_polling_loop():
             url = f"https://telegram.org{BOT_TOKEN}/getUpdates?timeout=10"
             if offset:
                 url += f"&offset={offset}"
-            req = urllib.request.Request(url, timeout=15)
-            with urllib.request.urlopen(req) as resp:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             if not data.get("ok"):
                 time.sleep(4)
