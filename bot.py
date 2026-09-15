@@ -150,4 +150,6 @@ def main_polling_loop():
         time.sleep(4)
 
 if __name__ == "__main__":
+    import threading
+    threading.Thread(target=run_fake_server, daemon=True).start()
     main_polling_loop()
