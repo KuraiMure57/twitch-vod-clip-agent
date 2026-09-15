@@ -1,8 +1,11 @@
 import json
 import os
+import sys
 import time
 import urllib.parse
 import urllib.request
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # ============================================================
 # CONFIGURACIÓN Y VARIABLES DE ENTORNO
@@ -17,7 +20,36 @@ if not BOT_TOKEN or not CHAT_ID or not GH_TOKEN:
     exit(1)
 
 # ============================================================
-# FUNCIONES DE CONEXIÓN CON GITHUB ACTIONS
+# SERVIDOR WEB FALSO DINÁMICO PARA ENGAÑAR A RENDER
+# ============================================================
+class FakeServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass
+
+def run_fake_server():
+    # Detectar puerto pasado por argumento o usar 10000 por defecto
+    port = 10000
+    if "--port" in sys.argv:
+        try:
+            idx = sys.argv.index("--port")
+            port = int(sys.argv[idx + 1])
+        except:
+            pass
+    
+    print(f"🌍 Servidor web falso escuchando en el puerto dinámico {port}")
+    try:
+        server = HTTPServer(("0.0.0.0", port), FakeServer)
+        server.serve_forever()
+    except Exception as e:
+        print(f"⚠️ Nota del servidor web: {e}")
+
+# ============================================================
+# FUNCIONES DE GITHUB ACTIONS
 # ============================================================
 def send_telegram_message(text):
     try:
@@ -79,17 +111,25 @@ def launch_pipeline():
         return False
 
 # ============================================================
-# BUCLE PRINCIPAL DE ESCUCHA DE TELEGRAM (POLLING)
+# BUCLE PRINCIPAL DE TELEGRAM
 # ============================================================
 def main_polling_loop():
     offset = None
+    # Forzar la lectura de la variable de limpieza si existe
+    if os.environ.get("TELEGRAM_OFFSET") == "-1":
+        offset = -1
+        
+    threading.Thread(target=run_fake_server, daemon=True).start()
     print("🚀 Bot iniciado correctamente en la nube. Escuchando 24/7...")
     
     while True:
         try:
             url = f"https://telegram.org{BOT_TOKEN}/getUpdates?timeout=10"
-            if offset:
+            if offset and offset != -1:
                 url += f"&offset={offset}"
+            elif offset == -1:
+                url += "&offset=-1"
+                
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -101,6 +141,7 @@ def main_polling_loop():
             for update in updates:
                 update_id = update.get("update_id")
                 if update_id:
+                    # Si estábamos limpiando, tomamos el control normal ahora
                     offset = update_id + 1
                 message = update.get("message")
                 if not message:
