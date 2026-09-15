@@ -3,8 +3,6 @@ import os
 import time
 import urllib.parse
 import urllib.request
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # ============================================================
 # CONFIGURACIÓN Y VARIABLES DE ENTORNO
@@ -17,25 +15,6 @@ REPO_FULL = os.environ.get("GITHUB_REPOSITORY", "KuraiMure57/twitch-vod-clip-age
 if not BOT_TOKEN or not CHAT_ID or not GH_TOKEN:
     print("❌ ERROR: Faltan variables de entorno esenciales.")
     exit(1)
-
-# ============================================================
-# SERVIDOR WEB FALSO PARA ENGAÑAR A RENDER (PLAN GRATUITO)
-# ============================================================
-class FakeServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def log_message(self, format, *args):
-        pass # Silenciar logs en la consola
-
-def run_fake_server():
-    port = 10000
-    server = HTTPServer(("0.0.0.0", port), FakeServer)
-
-    print(f"🌍 Servidor web falso escuchando en el puerto {port}")
-    server.serve_forever()
 
 # ============================================================
 # FUNCIONES DE CONEXIÓN CON GITHUB ACTIONS
@@ -104,7 +83,6 @@ def launch_pipeline():
 # ============================================================
 def main_polling_loop():
     offset = None
-    threading.Thread(target=run_fake_server, daemon=True).start()
     print("🚀 Bot iniciado correctamente en la nube. Escuchando 24/7...")
     
     while True:
@@ -150,6 +128,4 @@ def main_polling_loop():
         time.sleep(4)
 
 if __name__ == "__main__":
-    import threading
-    threading.Thread(target=run_fake_server, daemon=True).start()
     main_polling_loop()
