@@ -31,8 +31,9 @@ class FakeServer(BaseHTTPRequestHandler):
         pass # Silenciar logs en la consola
 
 def run_fake_server():
-    port = int(os.environ.get("PORT", 10000))
+    port = 10000
     server = HTTPServer(("0.0.0.0", port), FakeServer)
+
     print(f"🌍 Servidor web falso escuchando en el puerto {port}")
     server.serve_forever()
 
