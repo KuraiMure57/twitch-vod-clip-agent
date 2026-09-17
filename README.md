@@ -1,115 +1,81 @@
-# Twitch VOD Clip Agent
+# Twitch TikTok Agent
 
-Automated system for analyzing completed Twitch VODs, detecting interesting moments using AI, generating video clips, and sending them to Telegram for manual approval.
+Automated post-production and editing pipeline that ingests approved Twitch clips, crops them into vertical (9:16) format, generates synchronized dynamic subtitles, and prepares them for social media short-form platforms.
 
 ## 🎯 Project Purpose
 
-The purpose of this project is to automatically review a completed Twitch VOD and identify high-intensity or engaging moments that could work well as clips or short-form content.
+The purpose of this project is to take horizontal clips approved by the user via Telegram and automate the entire video editing workflow required for modern short-form content (TikTok, YouTube Shorts, Instagram Reels).
 
-> ⚠️ **Scope Boundary:** This agent does **not** perform final vertical cropping, does **not** add subtitles, and does **not** publish to social networks. Those tasks are delegated automatically to a separate dedicated project (`twitch-tiktok-agent`) once a clip is approved.
+> 🔗 **Input Trigger:** This repository operates as a passive reactive system. It remains idle until it receives a secure `repository_dispatch` token signal from the main analyzer (`twitch-vod-clip-agent`).
 
 ## 🔄 Core Workflow Diagram
 
 ```text
-/start (Telegram)
+Repository Dispatch (Signal from twitch-vod-clip-agent)
         ↓
-bot.py (Render Listener)
+test.yml (GitHub Actions Trigger)
         ↓
-Discovers & Downloads Twitch VOD
+Ingests approved.json Metadata & Video URL
         ↓
-Whisper Transcription (Timestamped)
+Smart Vertical Cropping (16:9 Horizontal → 9:16 Vertical)
         ↓
-Gemini AI Content Analysis
+Subtitles Generation (Audio Transcription alignment)
         ↓
-Candidate Filtering & Selection
+FFmpeg / Video Compositor Rendering
         ↓
-FFmpeg Clip Generation (MP4)
+Final MP4 Short Export
         ↓
-Interactive Telegram Approval (Buttons)
-        ↓
-[ User Approves Clip ]
-        ↓
-Generates approved.json Manifest
-        ↓
-Repository Dispatch (Triggers Project 2: twitch-tiktok-agent)
+Telegram Notification (Success/Failure logs and alerts)
 ```
 
-## 🤖 Step-by-Step Agent Architecture
+## 🤖 Step-by-Step Pipeline Architecture
 
-### 1. Twitch Authentication & Discovery
-Connects to the Twitch API using client credentials to discover and monitor the latest available VOD for the configured channel.
+### 1. Webhook Automation Ingestion
+The agent wakes up via GitHub Actions workflows upon receiving an external repository event. It parses the incoming payload, fetching the explicit VOD ID, timestamps, and metadata of the approved clip.
 
-### 2. Complete VOD Download
-Downloads the complete source stream locally via `yt-dlp` so the entire media file can be evaluated with precision.
+### 2. Video Processing & Re-framing
+The script handles the conversion from landscape (16:9) to portrait (9:16) format. It applies smart positioning to ensure the core action or webcam frame remains centered, making it ready for mobile viewing.
 
-### 3. Whisper Transcription
-Transcribes the audio track of the complete VOD using OpenAI's Whisper model. This outputs detailed timestamped segments allowing specific moments to be located programmatically.
+### 3. Audio Extraction & Word-Level Alignment
+The audio channel is processed to map exactly what words are spoken at what millisecond. This metadata is structured into renderable script lines.
 
-### 4. Gemini AI Analysis
-Sends the structured transcription to Google Gemini to identify potentially engaging highlights. Gemini evaluates segments based on contextual factors:
-* High-intensity gameplay & clutch situations
-* Jump scares & loud reactions
-* Comedic timing & funny statements
-* Unexpected plot twists or events
+### 4. Dynamic Subtitle Compositing
+Burn-in subtitles are rendered directly onto the video track. The script controls:
+* Font family, sizing, and geometric safety positioning.
+* Timing matching the active voice layer.
+* Error checking: If a processed video track or asset composition fails constraints (e.g., file sizes crossing communication boundaries), an integrated error hook is dispatched.
 
-The model scores each candidate and returns its start/end boundaries, category, suggested title, confidence level, and rationale.
+### 5. Smart Telegram Fallback Alerting
+If any clip payload exceeds Telegram's standard multimedia delivery limits during execution logs review, the internal communication module automatically switches from streaming video commands (`sendVideo`) to flat document data streams (`sendDocument`), keeping you notified without crashing the automation runner.
 
-### 5. Clip Generation
-The approved timestamps are passed to FFmpeg to cut the source VOD into distinct, perfectly synchronized high-quality MP4 video clips.
-
-### 6. Interactive Telegram Review
-Every candidate clip is sent directly to your private Telegram chat. Each payload includes:
-* The raw MP4 video clip
-* AI-Suggested Title & Score (0-100)
-* Category & Duration
-* Contextual Reason for Selection
-* **[ ✅ APPROVE ]** and **[ ❌ REJECT ]** inline buttons
-
-The system handles file sizes intelligently: clips under 50 MB are sent as native video streams, while heavier files (up to 2 GB) seamlessly fallback to structured document uploads to bypass Telegram's standard limits.
-
-### 7. Automated Hand-off (Project 2 Integration)
-When a clip is manually approved via Telegram, its metadata is written into an `approved.json` manifest. The agent then sends a secure `repository_dispatch` signal across repositories to instantly wake up the **TikTok & Shorts Editing Pipeline (`twitch-tiktok-agent`)**.
-
-## 📁 Project Architecture & File Output
+## 📁 Project Architecture
 
 ```text
+├── .github/workflows/
+│   └── test.yml                   # Core pipeline automation dispatcher
 ├── src/
-│   ├── twitch_auth.py             # Twitch API authentication
-│   ├── twitch_vods.py             # VOD tracking and scanning
-│   ├── twitch_vod_downloader.py   # Stream chunk downloading
-│   ├── whisper_transcriber.py     # Audio transcription engine
-│   ├── gemini_analyzer.py         # AI core analytics
-│   ├── candidate_filter.py        # Logic and evaluation rules
-│   ├── clip_generator.py          # FFmpeg video cutter
-│   └── telegram_approval.py       # Bot interaction & Webhook handler
-└── data/
-    ├── analysis/                  # Raw Gemini JSON evaluations
-    ├── transcriptions/            # VOD Text transcriptions
-    ├── filtered_candidates/       # Passed highlights manifest
-    ├── clips/                     # Generated MP4 media files
-    └── telegram_approved/         # Final selection manifests for Project 2
+│   ├── telegram_review.py         # Media communication and Telegram handler
+│   ├── video_processor.py         # Vertical conversion and cropping engine
+│   └── subtitle_generator.py      # Subtitle synchronization and burned-in text core
+└── requirements.txt               # Dependencies (Video manipulation, alignment tools)
 ```
 
 ## 🔐 Required GitHub Secrets
 
-Configure the following secrets in your Repository Settings (`Settings -> Secrets and variables -> Actions`):
+Configure the following secrets in this Repository Settings (`Settings -> Secrets and variables -> Actions`):
 
 | Secret Name | Purpose |
 | :--- | :--- |
-| `TWITCH_CLIENT_ID` | Twitch developer portal Client ID |
-| `TWITCH_CLIENT_SECRET` | Twitch developer portal Client Secret |
-| `GEMINI_API_KEY` | Google AI Studio access key for analysis |
-| `TELEGRAM_BOT_TOKEN` | HTTP API Token provided by `@BotFather` |
-| `TELEGRAM_CHAT_ID` | Your unique numerical user ID from `@userinfobot` |
-| `CROSS_REPO_TOKEN` | GitHub Personal Access Token (PAT) with full `Actions: Write` scopes to trigger Project 2 |
+| `TELEGRAM_BOT_TOKEN` | HTTP API Token provided by `@BotFather` to report run status |
+| `TELEGRAM_CHAT_ID` | Your unique numerical user ID from `@userinfobot` to receive alerts |
+
+*(Note: Other access scopes use the tokens dispatched by the parent repository environment during cross-talk execution).*
 
 ## 🧪 Operational Status
 
-**Status: FULLY FUNCTIONAL & OPERATIONAL**
+**Status: OPERATIONAL WITH LIVE ERROR HOOKS**
 
-The core pipeline has been thoroughly tested, benchmarked, and verified end-to-end:
-* Cloud Environment (Render Engine Deployment) ➔ **Active** ✅
-* Multi-model Media Pipeline (Whisper & Gemini SDK) ➔ **Verified** ✅
-* Cross-Repository Automation Dispatcher ➔ **Active** ✅
-
-The cloud environment responds instantaneously to conversational inputs and triggers external worker tasks without delays.
+The pipeline is integrated with your core notifier:
+* Multi-platform Format Conversion Engine ➔ **Active** ✅
+* Automated Dynamic Burn-In Subtitles ➔ **Active** ✅
+* Smart File Handling & Bypassing (>50 MB Document Fallback) ➔ **Active** ✅
