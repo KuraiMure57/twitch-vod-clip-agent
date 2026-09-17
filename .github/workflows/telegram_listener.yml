@@ -804,8 +804,7 @@ jobs:
 
           text = (
               "🚀 Procesamiento iniciado.\n\n"
-              "El Proyecto 2 comenzará a descargar "
-              "y analizar el último VOD.\n\n"
+              "Se ha activado el análisis del último directo (VOD) en Twitch.\n\n"
               "Te avisaré cuando termine."
           )
 
